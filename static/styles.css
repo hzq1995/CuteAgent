@@ -1,0 +1,263 @@
+:root {
+  --bg: #f6f3ee;
+  --ink: #24211d;
+  --muted: #776f65;
+  --line: #d8d0c5;
+  --panel: #fffaf2;
+  --accent: #1f7a68;
+  --accent-ink: #ffffff;
+  --warn: #a13d2d;
+  --code: #111827;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Georgia, "Times New Roman", "Microsoft YaHei", serif;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.topbar {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  padding: 24px clamp(18px, 5vw, 64px);
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(32px, 5vw, 56px);
+  font-weight: 700;
+}
+
+h2 {
+  font-size: 22px;
+  margin-bottom: 16px;
+}
+
+.eyebrow {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.workspace {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  padding: 32px clamp(18px, 5vw, 64px);
+}
+
+.workspace.detail {
+  display: block;
+  max-width: 1180px;
+}
+
+.composer,
+.history,
+.output-block {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 22px;
+}
+
+.prompt-form,
+.stack {
+  display: grid;
+  gap: 14px;
+}
+
+textarea,
+input {
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  outline: none;
+  padding: 14px 16px;
+  width: 100%;
+}
+
+textarea:focus,
+input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(31, 122, 104, 0.14);
+}
+
+button,
+.link-button {
+  align-items: center;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: var(--accent-ink);
+  cursor: pointer;
+  display: inline-flex;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 16px;
+  text-decoration: none;
+}
+
+.ghost {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.nav-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.task-list {
+  display: grid;
+  gap: 10px;
+}
+
+.task-row {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 96px minmax(0, 1fr);
+  padding: 12px;
+  text-decoration: none;
+}
+
+.task-row:hover {
+  border-color: var(--accent);
+}
+
+.task-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-time {
+  color: var(--muted);
+  font-size: 12px;
+  grid-column: 2;
+}
+
+.status {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 12px;
+  justify-content: center;
+  padding: 5px 10px;
+}
+
+.status.running,
+.status.queued {
+  border-color: #b88728;
+  color: #7c5514;
+}
+
+.status.succeeded {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.status.failed {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.task-meta {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.output-block {
+  margin-bottom: 18px;
+}
+
+pre {
+  background: var(--code);
+  border-radius: 8px;
+  color: #f8fafc;
+  margin: 0;
+  min-height: 96px;
+  overflow: auto;
+  padding: 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.answer-block pre {
+  min-height: 180px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.error {
+  color: var(--warn);
+}
+
+.login-page {
+  min-height: 100vh;
+}
+
+.login-shell {
+  display: grid;
+  min-height: 100vh;
+  padding: 18px;
+  place-items: center;
+}
+
+.login-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  max-width: 440px;
+  padding: 32px;
+  width: 100%;
+}
+
+.login-panel h1 {
+  font-size: 40px;
+  margin-bottom: 24px;
+}
+
+@media (max-width: 880px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    gap: 16px;
+  }
+}

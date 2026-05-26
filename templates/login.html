@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CuteHarness Login</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body class="login-page">
+    <main class="login-shell">
+      <section class="login-panel">
+        <p class="eyebrow">CuteHarness</p>
+        <h1>进入控制台</h1>
+        <form method="post" action="/login" class="stack">
+          <label for="password">访问密码</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" autofocus required>
+          {% if error %}
+            <p class="error">{{ error }}</p>
+          {% endif %}
+          <button type="submit">登录</button>
+        </form>
+      </section>
+    </main>
+  </body>
+</html>

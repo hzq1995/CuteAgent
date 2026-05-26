@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CuteHarness</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">DeepSeek V4 Flash</p>
+        <h1>CuteHarness</h1>
+      </div>
+      <form method="post" action="/logout">
+        <button class="ghost" type="submit">退出</button>
+      </form>
+    </header>
+
+    <main class="workspace">
+      <section class="composer">
+        <h2>新任务</h2>
+        <form method="post" action="/tasks" class="prompt-form">
+          <textarea name="prompt" rows="8" placeholder="输入你想让 AI 处理的任务..." required></textarea>
+          <button type="submit">发送并推送钉钉</button>
+        </form>
+      </section>
+
+      <section class="history">
+        <h2>任务记录</h2>
+        {% if tasks %}
+          <div class="task-list">
+            {% for task in tasks %}
+              <a class="task-row" href="/tasks/{{ task.id }}">
+                <span class="status {{ task.status }}">{{ task.status }}</span>
+                <span class="task-title">{{ task.prompt }}</span>
+                <span class="task-time">{{ task.created_at }}</span>
+              </a>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="muted">暂无任务。</p>
+        {% endif %}
+      </section>
+    </main>
+  </body>
+</html>

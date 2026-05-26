@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CuteHarness Task</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">任务详情</p>
+        <h1>CuteHarness</h1>
+      </div>
+      <nav class="nav-actions">
+        <a class="ghost link-button" href="/">返回</a>
+        <form method="post" action="/logout">
+          <button class="ghost" type="submit">退出</button>
+        </form>
+      </nav>
+    </header>
+
+    <main class="workspace detail">
+      <section class="task-meta">
+        <span id="status" class="status {{ task.status }}">{{ task.status }}</span>
+        <p>{{ task.created_at }}</p>
+      </section>
+
+      <section class="output-block">
+        <h2>输入</h2>
+        <pre>{{ task.prompt }}</pre>
+      </section>
+
+      <section class="output-block">
+        <h2>思考中</h2>
+        <pre id="reasoning">{{ task.reasoning_content }}</pre>
+      </section>
+
+      <section class="output-block answer-block">
+        <h2>最终回答</h2>
+        <pre id="answer">{{ task.answer }}</pre>
+      </section>
+
+      <section class="output-block">
+        <h2>钉钉结果</h2>
+        <pre id="dingding">{{ task.dingding_result | tojson(indent=2) if task.dingding_result else "" }}</pre>
+      </section>
+
+      <p id="error" class="error">{{ task.error }}</p>
+    </main>
+
+    <script>
+      const taskId = "{{ task.id }}";
+      const statusEl = document.getElementById("status");
+      const reasoningEl = document.getElementById("reasoning");
+      const answerEl = document.getElementById("answer");
+      const dingdingEl = document.getElementById("dingding");
+      const errorEl = document.getElementById("error");
+
+      if (!["succeeded", "failed"].includes(statusEl.textContent.trim())) {
+        const source = new EventSource(`/tasks/${taskId}/stream`);
+
+        source.addEventListener("status", (event) => {
+          const payload = JSON.parse(event.data);
+          statusEl.textContent = payload.status;
+          statusEl.className = `status ${payload.status}`;
+        });
+
+        source.addEventListener("reasoning", (event) => {
+          reasoningEl.textContent += JSON.parse(event.data).delta;
+        });
+
+        source.addEventListener("answer", (event) => {
+          answerEl.textContent += JSON.parse(event.data).delta;
+        });
+
+        source.addEventListener("dingding", (event) => {
+          dingdingEl.textContent = JSON.stringify(JSON.parse(event.data).result, null, 2);
+        });
+
+        source.addEventListener("error", (event) => {
+          errorEl.textContent = JSON.parse(event.data).error;
+          source.close();
+        });
+
+        source.addEventListener("done", () => {
+          source.close();
+        });
+      }
+    </script>
+  </body>
+</html>
