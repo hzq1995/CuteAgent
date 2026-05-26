@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CuteHarness 设置</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      {% include "_sidebar.html" %}
+      <main class="page-pane">
+        <section class="page-content">
+          <div class="page-header">
+            <p class="kicker">Settings</p>
+            <h1>设置</h1>
+          </div>
+          {% if saved %}
+            <p class="success-note">设置已保存。</p>
+          {% endif %}
+          <form class="panel-form" method="post" action="/settings">
+            <label>
+              <span>系统提示词</span>
+              <textarea name="system_prompt" rows="12" placeholder="定义 CuteHarness 的角色、边界和工具使用策略。">{{ app_settings.system_prompt }}</textarea>
+            </label>
+            <div class="form-row two">
+              <label>
+                <span>Python 超时秒数</span>
+                <input name="python_timeout_seconds" type="number" min="1" max="300" value="{{ app_settings.python_timeout_seconds }}">
+              </label>
+              <label>
+                <span>最大工具轮数</span>
+                <input name="max_tool_rounds" type="number" min="1" max="20" value="{{ app_settings.max_tool_rounds }}">
+              </label>
+            </div>
+            <div class="form-actions">
+              <button type="submit">保存设置</button>
+            </div>
+          </form>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

@@ -1,4 +1,8 @@
 import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.storage import TaskStore
 
@@ -57,3 +61,46 @@ def test_legacy_task_json_is_normalized_to_conversation(tmp_path):
     assert conversation["messages"][1]["role"] == "assistant"
     assert conversation["messages"][1]["content"] == "old answer"
     assert conversation["messages"][1]["reasoning_content"] == "old thought"
+
+
+def test_chat_context_preserves_reasoning_tool_calls_and_tool_results(tmp_path):
+    store = TaskStore(tmp_path / "tasks.json")
+    conversation = store.create_conversation("send a reminder")
+    conversation_id = conversation["id"]
+    assistant_id = conversation["messages"][-1]["id"]
+    tool_calls = [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "send_dingtalk_message", "arguments": "{\"text\":\"hi\"}"},
+        }
+    ]
+
+    store.append_reasoning(conversation_id, assistant_id, "need to call the tool")
+    store.append_answer(conversation_id, assistant_id, "sending")
+    store.attach_tool_calls(conversation_id, assistant_id, tool_calls)
+    store.append_tool_message(
+        conversation_id=conversation_id,
+        assistant_message_id=assistant_id,
+        tool_call_id="call_1",
+        name="send_dingtalk_message",
+        arguments={"text": "hi"},
+        result={"ok": True},
+    )
+    store.update_message(conversation_id, assistant_id, status="succeeded")
+    store.append_user_message(conversation_id, "thanks")
+    next_assistant = store.create_assistant_message(conversation_id)
+
+    context = store.chat_context(conversation_id, next_assistant["id"])
+
+    assert context == [
+        {"role": "user", "content": "send a reminder"},
+        {
+            "role": "assistant",
+            "content": "sending",
+            "reasoning_content": "need to call the tool",
+            "tool_calls": tool_calls,
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "{\"ok\": true}"},
+        {"role": "user", "content": "thanks"},
+    ]

@@ -1,0 +1,34 @@
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">C</span>
+    <div>
+      <p class="brand-title">CuteHarness</p>
+      <p class="brand-subtitle">DeepSeek V4 Flash</p>
+    </div>
+  </div>
+
+  <nav class="primary-nav" aria-label="主导航">
+    <a class="nav-link {% if active_page == 'chat' and not conversation %}active{% endif %}" href="/">新建对话</a>
+    <a class="nav-link {% if active_page == 'scheduled_tasks' %}active{% endif %}" href="/scheduled-tasks">定时任务</a>
+    <a class="nav-link {% if active_page == 'settings' %}active{% endif %}" href="/settings">设置</a>
+  </nav>
+
+  <div class="sidebar-section">
+    <p class="sidebar-label">历史对话</p>
+    <nav class="conversation-list" aria-label="历史对话">
+      {% for item in conversations %}
+        <a
+          class="conversation-link {% if conversation and item.id == conversation.id %}active{% endif %}"
+          href="/conversations/{{ item.id }}"
+        >
+          <span class="conversation-title">{{ item.title }}</span>
+          <span class="conversation-status {{ item.status }}">{{ item.status }}</span>
+        </a>
+      {% endfor %}
+    </nav>
+  </div>
+
+  <form method="post" action="/logout" class="logout-form">
+    <button class="text-button" type="submit">退出登录</button>
+  </form>
+</aside>

@@ -1,5 +1,6 @@
 import asyncio
 import json
+from contextlib import suppress
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -7,13 +8,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
+from app.agent_tools import TOOL_DEFINITIONS, AgentToolRunner, parse_tool_arguments
+from app.app_settings import AppSettingsStore
 from app.config import BASE_DIR, get_settings
 from app.deepseek_client import DeepSeekClient
+from app.scheduler_store import ScheduledTaskStore
 from app.storage import TaskStore
-from utils.dingding_robot import DingdingRobot
 
-
-BUSINESS_NOTICE_PREFIX = "[业务通知]"
 
 settings = get_settings()
 app = FastAPI(title="CuteHarness")
@@ -27,7 +28,9 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
-store = TaskStore(BASE_DIR / "data" / "tasks.json")
+store = TaskStore(BASE_DIR / "data" / "conversations")
+scheduled_task_store = ScheduledTaskStore(BASE_DIR / "data" / "scheduled_tasks.json")
+app_settings_store = AppSettingsStore(BASE_DIR / "data" / "settings.json")
 
 
 def require_login(request: Request) -> None:
@@ -44,6 +47,20 @@ def redirect_if_unauthenticated(request: Request) -> RedirectResponse | None:
 @app.exception_handler(401)
 async def auth_exception_handler(request: Request, exc: HTTPException) -> RedirectResponse:
     return RedirectResponse("/login", status_code=303)
+
+
+@app.on_event("startup")
+async def start_scheduler() -> None:
+    app.state.scheduler_task = asyncio.create_task(scheduler_loop())
+
+
+@app.on_event("shutdown")
+async def stop_scheduler() -> None:
+    task = getattr(app.state, "scheduler_task", None)
+    if task:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -139,8 +156,8 @@ async def conversation_stream(
         assistant_id = ""
         sent_reasoning_len = int(request.query_params.get("reasoning_offset", "0") or "0")
         sent_answer_len = int(request.query_params.get("answer_offset", "0") or "0")
+        sent_tool_count = int(request.query_params.get("tool_count", "0") or "0")
         sent_status = ""
-        sent_dingding = False
 
         while True:
             if await request.is_disconnected():
@@ -160,9 +177,9 @@ async def conversation_stream(
                 if assistant_id:
                     sent_reasoning_len = 0
                     sent_answer_len = 0
+                    sent_tool_count = 0
                 assistant_id = assistant["id"]
                 sent_status = ""
-                sent_dingding = False
                 yield sse("assistant", {"message_id": assistant_id})
 
             if assistant["status"] != sent_status:
@@ -192,12 +209,11 @@ async def conversation_stream(
                 )
                 sent_answer_len = len(answer)
 
-            if assistant.get("dingding_result") is not None and not sent_dingding:
-                sent_dingding = True
-                yield sse(
-                    "dingding",
-                    {"message_id": assistant_id, "result": assistant["dingding_result"]},
-                )
+            tools = current_tool_messages(conversation, assistant_id)
+            if len(tools) > sent_tool_count:
+                for tool_message in tools[sent_tool_count:]:
+                    yield sse("tool_call_result", {"message_id": assistant_id, "message": tool_message})
+                sent_tool_count = len(tools)
 
             if conversation.get("error"):
                 yield sse("error", {"message_id": assistant_id, "error": conversation["error"]})
@@ -206,13 +222,100 @@ async def conversation_stream(
             if assistant["status"] == "failed":
                 yield sse("done", {"status": "failed", "message_id": assistant_id})
                 break
-            if assistant["status"] == "succeeded" and sent_dingding:
+            if assistant["status"] == "succeeded":
                 yield sse("done", {"status": "succeeded", "message_id": assistant_id})
                 break
 
             await asyncio.sleep(0.35)
 
     return StreamingResponse(events(), media_type="text/event-stream")
+
+
+@app.get("/scheduled-tasks", response_class=HTMLResponse)
+async def scheduled_tasks_page(request: Request):
+    redirect = redirect_if_unauthenticated(request)
+    if redirect:
+        return redirect
+    return templates.TemplateResponse(
+        "scheduled_tasks.html",
+        base_context(request, active_page="scheduled_tasks")
+        | {"scheduled_tasks": scheduled_task_store.list_tasks(), "editing_task": None},
+    )
+
+
+@app.post("/scheduled-tasks")
+async def create_scheduled_task(
+    request: Request,
+    title: str = Form(""),
+    prompt: str = Form(...),
+    schedule_type: str = Form(...),
+    schedule_value: str = Form(...),
+    enabled: str | None = Form(None),
+):
+    require_login(request)
+    scheduled_task_store.create_task(title, prompt, schedule_type, schedule_value, enabled == "on")
+    return RedirectResponse("/scheduled-tasks", status_code=303)
+
+
+@app.get("/scheduled-tasks/{task_id}", response_class=HTMLResponse)
+async def edit_scheduled_task_page(task_id: str, request: Request):
+    require_login(request)
+    task = scheduled_task_store.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Scheduled task not found")
+    return templates.TemplateResponse(
+        "scheduled_tasks.html",
+        base_context(request, active_page="scheduled_tasks")
+        | {"scheduled_tasks": scheduled_task_store.list_tasks(), "editing_task": task},
+    )
+
+
+@app.post("/scheduled-tasks/{task_id}")
+async def update_scheduled_task(
+    task_id: str,
+    request: Request,
+    title: str = Form(""),
+    prompt: str = Form(...),
+    schedule_type: str = Form(...),
+    schedule_value: str = Form(...),
+    enabled: str | None = Form(None),
+):
+    require_login(request)
+    scheduled_task_store.update_task(task_id, title, prompt, schedule_type, schedule_value, enabled == "on")
+    return RedirectResponse("/scheduled-tasks", status_code=303)
+
+
+@app.post("/scheduled-tasks/{task_id}/delete")
+async def delete_scheduled_task(task_id: str, request: Request):
+    require_login(request)
+    scheduled_task_store.delete_task(task_id)
+    return RedirectResponse("/scheduled-tasks", status_code=303)
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request):
+    redirect = redirect_if_unauthenticated(request)
+    if redirect:
+        return redirect
+    return templates.TemplateResponse(
+        "settings.html",
+        base_context(request, active_page="settings") | {"app_settings": app_settings_store.get(), "saved": False},
+    )
+
+
+@app.post("/settings", response_class=HTMLResponse)
+async def update_settings(
+    request: Request,
+    system_prompt: str = Form(""),
+    python_timeout_seconds: int = Form(30),
+    max_tool_rounds: int = Form(5),
+):
+    require_login(request)
+    values = app_settings_store.update(system_prompt, python_timeout_seconds, max_tool_rounds)
+    return templates.TemplateResponse(
+        "settings.html",
+        base_context(request, active_page="settings") | {"app_settings": values, "saved": True},
+    )
 
 
 @app.post("/tasks")
@@ -235,22 +338,30 @@ async def task_stream_compat(task_id: str, request: Request, _: None = Depends(r
 
 
 def render_chat(request: Request, conversation: dict | None):
-    conversations = store.list_conversations()
     active_assistant = latest_assistant(conversation) if conversation else None
     reasoning_offset = len(active_assistant.get("reasoning_content", "")) if active_assistant else 0
     answer_offset = len(active_assistant.get("content", "")) if active_assistant else 0
+    tool_count = len(current_tool_messages(conversation, active_assistant["id"])) if conversation and active_assistant else 0
     return templates.TemplateResponse(
         "index.html",
-        {
-            "request": request,
+        base_context(request, active_page="chat")
+        | {
             "conversation": conversation,
-            "conversations": conversations,
             "is_running": bool(conversation and store.has_running_message(conversation["id"])),
             "active_assistant": active_assistant,
             "reasoning_offset": reasoning_offset,
             "answer_offset": answer_offset,
+            "tool_count": tool_count,
         },
     )
+
+
+def base_context(request: Request, active_page: str) -> dict:
+    return {
+        "request": request,
+        "conversations": store.list_conversations(),
+        "active_page": active_page,
+    }
 
 
 def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> None:
@@ -258,51 +369,139 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
     store.update_message(conversation_id, assistant_message_id, status="running")
 
     try:
+        app_config = app_settings_store.get()
         client = DeepSeekClient(
             api_key=settings.deepseek_api_key,
             base_url=settings.deepseek_base_url,
             model=settings.deepseek_model,
         )
-        messages = store.chat_context(conversation_id, assistant_message_id)
-        for kind, delta in client.stream_chat(messages):
-            if kind == "reasoning":
-                store.append_reasoning(conversation_id, assistant_message_id, delta)
-            elif kind == "answer":
-                store.append_answer(conversation_id, assistant_message_id, delta)
+        tool_runner = AgentToolRunner(
+            base_dir=BASE_DIR,
+            scheduled_tasks=scheduled_task_store,
+            python_timeout_seconds=app_config["python_timeout_seconds"],
+            dingtalk_webhook_url=settings.dingtalk_webhook_url,
+            dingtalk_access_token=settings.dingtalk_access_token,
+        )
+        messages = build_model_context(conversation_id, assistant_message_id, app_config["system_prompt"])
+        max_tool_rounds = app_config["max_tool_rounds"]
+        tool_rounds = 0
+
+        while True:
+            requested_tools = False
+            assistant_protocol_reasoning = ""
+            assistant_protocol_content = ""
+            for event in client.stream_agent_turn(messages, TOOL_DEFINITIONS):
+                if event["type"] == "reasoning":
+                    assistant_protocol_reasoning += event["delta"]
+                    store.append_reasoning(conversation_id, assistant_message_id, event["delta"])
+                elif event["type"] == "answer":
+                    assistant_protocol_content += event["delta"]
+                    store.append_answer(conversation_id, assistant_message_id, event["delta"])
+                elif event["type"] == "tool_calls":
+                    requested_tools = True
+                    tool_rounds += 1
+                    if tool_rounds > max_tool_rounds:
+                        raise RuntimeError(f"Exceeded max tool rounds: {max_tool_rounds}")
+                    tool_calls = normalize_tool_calls(event["tool_calls"])
+                    store.attach_tool_calls(conversation_id, assistant_message_id, tool_calls)
+                    assistant_message: dict = {
+                        "role": "assistant",
+                        "content": assistant_protocol_content or None,
+                        "reasoning_content": assistant_protocol_reasoning or None,
+                        "tool_calls": tool_calls,
+                    }
+                    messages.append(assistant_message)
+                    for tool_call in tool_calls:
+                        function = tool_call["function"]
+                        arguments = parse_tool_arguments(function.get("arguments", ""))
+                        result = tool_runner.run(function["name"], arguments)
+                        store.append_tool_message(
+                            conversation_id=conversation_id,
+                            assistant_message_id=assistant_message_id,
+                            tool_call_id=tool_call["id"],
+                            name=function["name"],
+                            arguments=arguments,
+                            result=result,
+                            status="succeeded" if result.get("ok") else "failed",
+                        )
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call["id"],
+                                "content": json.dumps(result, ensure_ascii=False),
+                            }
+                        )
+                    break
+
+            if not requested_tools:
+                break
 
         store.update_message(conversation_id, assistant_message_id, status="succeeded")
         store.update_conversation(conversation_id, status="succeeded", error="")
     except Exception as exc:
         store.update_message(conversation_id, assistant_message_id, status="failed")
         store.update_conversation(conversation_id, status="failed", error=str(exc))
-        return
-
-    conversation = store.get_conversation(conversation_id)
-    assistant = find_message(conversation, assistant_message_id) if conversation else None
-    answer = (assistant or {}).get("content") or "(empty reply)"
-    robot = DingdingRobot(
-        webhook_url=settings.dingtalk_webhook_url,
-        access_token=settings.dingtalk_access_token,
-    )
-    dingding_result = robot.send_markdown(
-        f"{BUSINESS_NOTICE_PREFIX} CuteHarness AI Reply",
-        f"{BUSINESS_NOTICE_PREFIX}\n\n{answer}",
-    )
-    store.attach_dingding_result(conversation_id, assistant_message_id, dingding_result)
 
 
-def latest_assistant(conversation: dict) -> dict | None:
+def build_model_context(conversation_id: str, assistant_message_id: str, system_prompt: str) -> list[dict]:
+    messages: list[dict] = []
+    if system_prompt.strip():
+        messages.append({"role": "system", "content": system_prompt.strip()})
+    messages.extend(store.chat_context(conversation_id, assistant_message_id))
+    return messages
+
+
+async def scheduler_loop() -> None:
+    while True:
+        for task in scheduled_task_store.claim_due_tasks():
+            asyncio.create_task(run_scheduled_task(task))
+        await asyncio.sleep(20)
+
+
+async def run_scheduled_task(task: dict) -> None:
+    conversation = store.create_conversation(task["prompt"])
+    assistant = conversation["messages"][-1]
+    await asyncio.to_thread(run_conversation_turn, conversation["id"], assistant["id"])
+    updated = store.get_conversation(conversation["id"])
+    status = (updated or {}).get("status", "unknown")
+    error = (updated or {}).get("error", "")
+    scheduled_task_store.mark_result(task["id"], f"conversation:{conversation['id']} status:{status}", error)
+
+
+def normalize_tool_calls(tool_calls: list[dict]) -> list[dict]:
+    normalized = []
+    for index, tool_call in enumerate(tool_calls):
+        function = tool_call.get("function", {})
+        normalized.append(
+            {
+                "id": tool_call.get("id") or f"tool_call_{index}",
+                "type": tool_call.get("type") or "function",
+                "function": {
+                    "name": function.get("name", ""),
+                    "arguments": function.get("arguments", "") or "{}",
+                },
+            }
+        )
+    return normalized
+
+
+def latest_assistant(conversation: dict | None) -> dict | None:
+    if not conversation:
+        return None
     for message in reversed(conversation["messages"]):
         if message["role"] == "assistant":
             return message
     return None
 
 
-def find_message(conversation: dict, message_id: str) -> dict | None:
-    for message in conversation["messages"]:
-        if message["id"] == message_id:
-            return message
-    return None
+def current_tool_messages(conversation: dict | None, assistant_id: str) -> list[dict]:
+    if not conversation:
+        return []
+    messages = conversation["messages"]
+    for index, message in enumerate(messages):
+        if message["id"] == assistant_id:
+            return [item for item in messages[index + 1 :] if item["role"] == "tool"]
+    return []
 
 
 def sse(event: str, payload: dict) -> str:

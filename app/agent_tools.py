@@ -1,0 +1,186 @@
+import json
+import subprocess
+import sys
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from app.scheduler_store import ScheduledTaskStore
+from utils.dingding_robot import DingdingRobot
+
+
+BUSINESS_NOTICE_PREFIX = "[业务通知]"
+MAX_TOOL_OUTPUT_CHARS = 12000
+
+
+TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "run_python",
+            "description": "Run Python code on the local machine and return stdout, stderr, exit code, and timeout status. Use print() to get output.",
+            "parameters": {
+                "type": "object",
+                "properties": {"code": {"type": "string", "description": "Python code to execute."}},
+                "required": ["code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_scheduled_tasks",
+            "description": "List CuteHarness application scheduled tasks. By default only returns enabled tasks. Only list all tasks if user specifies.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "enabled_only": {"type": "boolean", "description": "If true (default), only return enabled tasks. If false, return all tasks."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_scheduled_task",
+            "description": "Create a CuteHarness application scheduled task. schedule_type must be once, daily, or interval_minutes. Remember to use send_dingtalk_message in schedule value param, to notify user about the result of the scheduled task.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "prompt": {"type": "string"},
+                    "schedule_type": {"type": "string", "enum": ["once", "daily", "interval_minutes"]},
+                    "schedule_value": {"type": "string", "description": "once: YYYY-MM-DD HH:mm, daily: HH:mm, interval_minutes: positive integer."},
+                    "enabled": {"type": "boolean"},
+                },
+                "required": ["title", "prompt", "schedule_type", "schedule_value", "enabled"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_scheduled_task",
+            "description": "Delete a CuteHarness application scheduled task by id.",
+            "parameters": {
+                "type": "object",
+                "properties": {"task_id": {"type": "string"}},
+                "required": ["task_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_dingtalk_message",
+            "description": "Send a DingTalk markdown message. The tool automatically prefixes title and text with [业务通知].",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "text": {"type": "string"},
+                },
+                "required": ["title", "text"],
+            },
+        },
+    },
+]
+
+
+class AgentToolRunner:
+    def __init__(
+        self,
+        base_dir: Path,
+        scheduled_tasks: ScheduledTaskStore,
+        python_timeout_seconds: int,
+        dingtalk_webhook_url: str = "",
+        dingtalk_access_token: str = "",
+    ):
+        self.base_dir = base_dir
+        self.scheduled_tasks = scheduled_tasks
+        self.python_timeout_seconds = python_timeout_seconds
+        self.dingtalk_webhook_url = dingtalk_webhook_url
+        self.dingtalk_access_token = dingtalk_access_token
+        self._tools: dict[str, Callable[..., Any]] = {
+            "run_python": self.run_python,
+            "list_scheduled_tasks": self.list_scheduled_tasks,
+            "create_scheduled_task": self.create_scheduled_task,
+            "delete_scheduled_task": self.delete_scheduled_task,
+            "send_dingtalk_message": self.send_dingtalk_message,
+        }
+
+    def run(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if name not in self._tools:
+            return {"ok": False, "error": f"Unknown tool: {name}"}
+        try:
+            result = self._tools[name](**arguments)
+            return {"ok": True, "result": result}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def run_python(self, code: str) -> dict[str, Any]:
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-c", code],
+                cwd=self.base_dir,
+                capture_output=True,
+                text=True,
+                timeout=self.python_timeout_seconds,
+            )
+            return {
+                "stdout": truncate(completed.stdout),
+                "stderr": truncate(completed.stderr),
+                "exit_code": completed.returncode,
+                "timed_out": False,
+            }
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "stdout": truncate(exc.stdout or ""),
+                "stderr": truncate(exc.stderr or ""),
+                "exit_code": None,
+                "timed_out": True,
+            }
+
+    def list_scheduled_tasks(self, enabled_only: bool = True) -> list[dict[str, Any]]:
+        return self.scheduled_tasks.list_tasks(enabled_only=enabled_only)
+
+    def create_scheduled_task(
+        self,
+        title: str,
+        prompt: str,
+        schedule_type: str,
+        schedule_value: str,
+        enabled: bool = True,
+    ) -> dict[str, Any]:
+        return self.scheduled_tasks.create_task(title, prompt, schedule_type, schedule_value, enabled)
+
+    def delete_scheduled_task(self, task_id: str) -> dict[str, Any]:
+        return {"deleted": self.scheduled_tasks.delete_task(task_id), "task_id": task_id}
+
+    def send_dingtalk_message(self, title: str, text: str) -> dict[str, Any]:
+        robot = DingdingRobot(
+            webhook_url=self.dingtalk_webhook_url,
+            access_token=self.dingtalk_access_token,
+        )
+        return robot.send_markdown(ensure_business_prefix(title), ensure_business_prefix(text))
+
+
+def parse_tool_arguments(raw: str) -> dict[str, Any]:
+    if not raw:
+        return {}
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("Tool arguments must be a JSON object")
+    return parsed
+
+
+def ensure_business_prefix(value: str) -> str:
+    value = value or ""
+    return value if value.startswith(BUSINESS_NOTICE_PREFIX) else f"{BUSINESS_NOTICE_PREFIX} {value}".strip()
+
+
+def truncate(value: str) -> str:
+    if len(value) <= MAX_TOOL_OUTPUT_CHARS:
+        return value
+    return value[:MAX_TOOL_OUTPUT_CHARS] + "\n...[truncated]"

@@ -8,60 +8,77 @@
   </head>
   <body>
     <div class="app-shell">
-      <aside class="sidebar">
-        <div class="brand">
-          <span class="brand-mark">C</span>
-          <div>
-            <p class="brand-title">CuteHarness</p>
-            <p class="brand-subtitle">DeepSeek V4 Flash</p>
-          </div>
-        </div>
-
-        <a class="new-chat" href="/">新建对话</a>
-
-        <nav class="conversation-list" aria-label="历史对话">
-          {% for item in conversations %}
-            <a
-              class="conversation-link {% if conversation and item.id == conversation.id %}active{% endif %}"
-              href="/conversations/{{ item.id }}"
-            >
-              <span class="conversation-title">{{ item.title }}</span>
-              <span class="conversation-status {{ item.status }}">{{ item.status }}</span>
-            </a>
-          {% endfor %}
-        </nav>
-
-        <form method="post" action="/logout" class="logout-form">
-          <button class="text-button" type="submit">退出登录</button>
-        </form>
-      </aside>
+      {% include "_sidebar.html" %}
 
       <main class="chat-pane">
         <section class="chat-scroll" id="chat-scroll">
           {% if conversation %}
             <div class="chat-header">
-              <p class="kicker">多轮对话</p>
+              <p class="kicker">多轮 Agent 对话</p>
               <h1>{{ conversation.title }}</h1>
             </div>
 
-            <div class="message-list">
+            <div class="message-list" id="message-list">
               {% for message in conversation.messages %}
                 {% if message.role == "user" %}
                   <article class="message user-message">
                     <div class="message-bubble">{{ message.content }}</div>
                   </article>
-                {% else %}
+                {% elif message.role == "assistant" %}
                   <article class="message assistant-message" data-message-id="{{ message.id }}">
                     <div class="assistant-avatar">AI</div>
                     <div class="assistant-body">
+                      <div class="assistant-status-row">
+                        <span class="message-status {{ message.status }}">{{ message.status }}</span>
+                      </div>
+                      <div class="assistant-parts" id="parts-{{ message.id }}">
+                        {% if message.parts %}
+                          {% for part in message.parts %}
+                            {% if part.type == "reasoning" %}
+                              <details class="reasoning" {% if loop.last and message.status in ["queued", "running"] %}open{% endif %}>
+                                <summary>Thinking</summary>
+                                <pre>{{ part.content }}</pre>
+                              </details>
+                            {% elif part.type == "answer" %}
+                              <div class="answer markdown-body">{{ part.content }}</div>
+                            {% elif part.type == "tool" %}
+                              <article class="message tool-message inline-tool-message">
+                                <div class="tool-card">
+                                  <div class="tool-card-header">
+                                    <span>{{ part.name }}</span>
+                                    <span class="message-status {{ part.status }}">{{ part.status }}</span>
+                                  </div>
+                                  <details>
+                                    <summary>Tool arguments and result</summary>
+                                    <pre>{{ {"arguments": part.arguments, "result": part.result} | tojson(indent=2) }}</pre>
+                                  </details>
+                                </div>
+                              </article>
+                            {% endif %}
+                          {% endfor %}
+                        {% else %}
+                          {% if message.reasoning_content or message.content %}
                       <details class="reasoning" {% if message.status in ["queued", "running"] %}open{% endif %}>
                         <summary>思考过程 <span class="message-status {{ message.status }}">{{ message.status }}</span></summary>
-                        <pre id="reasoning-{{ message.id }}">{{ message.reasoning_content }}</pre>
+                        <pre>{{ message.reasoning_content }}</pre>
                       </details>
-                      <div class="answer markdown-body" id="answer-{{ message.id }}">{{ message.content }}</div>
-                      <div class="dingding-result" id="dingding-{{ message.id }}">
-                        {% if message.dingding_result %}钉钉：{{ message.dingding_result | tojson }}{% endif %}
+                      <div class="answer markdown-body">{{ message.content }}</div>
+                          {% endif %}
+                        {% endif %}
                       </div>
+                    </div>
+                  </article>
+                {% elif message.role == "tool" and not message.inline_rendered %}
+                  <article class="message tool-message">
+                    <div class="tool-card">
+                      <div class="tool-card-header">
+                        <span>{{ message.name }}</span>
+                        <span class="message-status {{ message.status }}">{{ message.status }}</span>
+                      </div>
+                      <details>
+                        <summary>查看工具参数和结果</summary>
+                        <pre>{{ {"arguments": message.arguments, "result": message.result} | tojson(indent=2) }}</pre>
+                      </details>
                     </div>
                   </article>
                 {% endif %}
@@ -71,7 +88,7 @@
             <div class="empty-state">
               <p class="kicker">CuteHarness</p>
               <h1>今天要处理什么？</h1>
-              <p>输入一个任务，系统会流式展示思考和回答，并在完成后推送钉钉。</p>
+              <p>输入任务后，系统会流式展示思考和回答。需要发钉钉时，Agent 会主动调用钉钉工具。</p>
             </div>
           {% endif %}
           <div class="scroll-anchor" id="scroll-anchor" aria-hidden="true"></div>
@@ -100,6 +117,7 @@
       const form = document.querySelector(".composer");
       const textarea = document.querySelector(".composer textarea");
       const button = document.querySelector(".composer button");
+      const messageList = document.getElementById("message-list");
 
       function escapeHtml(value) {
         return value
@@ -118,11 +136,41 @@
           .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
       }
 
+      function normalizeMarkdownTables(source) {
+        return source.replace(/\|\s+(?=\|)/g, "|\n");
+      }
+
+      function parseTableRow(line) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("|") || !trimmed.endsWith("|")) return null;
+        return trimmed.slice(1, -1).split("|").map((cell) => cell.trim());
+      }
+
+      function isTableDivider(line) {
+        const cells = parseTableRow(line);
+        return Boolean(cells && cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell)));
+      }
+
+      function renderTable(rows) {
+        if (rows.length < 2 || !isTableDivider(rows[1])) return null;
+        const head = parseTableRow(rows[0]);
+        const body = rows.slice(2).map(parseTableRow).filter(Boolean);
+        if (!head || !body.length || body.some((row) => row.length !== head.length)) return null;
+
+        return [
+          "<div class=\"table-scroll\"><table>",
+          `<thead><tr>${head.map((cell) => `<th>${renderInlineMarkdown(cell)}</th>`).join("")}</tr></thead>`,
+          `<tbody>${body.map((row) => `<tr>${row.map((cell) => `<td>${renderInlineMarkdown(cell)}</td>`).join("")}</tr>`).join("")}</tbody>`,
+          "</table></div>",
+        ].join("");
+      }
+
       function renderMarkdown(source) {
-        const lines = source.replace(/\r\n/g, "\n").split("\n");
+        const lines = normalizeMarkdownTables(source.replace(/\r\n/g, "\n")).split("\n");
         const html = [];
         let paragraph = [];
         let list = [];
+        let table = [];
         let inCode = false;
         let codeLines = [];
 
@@ -140,6 +188,17 @@
           }
         }
 
+        function flushTable() {
+          if (!table.length) return;
+          const tableHtml = renderTable(table);
+          if (tableHtml) {
+            html.push(tableHtml);
+          } else {
+            table.forEach((line) => paragraph.push(line.trim()));
+          }
+          table = [];
+        }
+
         for (const line of lines) {
           if (line.trim().startsWith("```")) {
             if (inCode) {
@@ -147,6 +206,7 @@
               codeLines = [];
               inCode = false;
             } else {
+              flushTable();
               flushParagraph();
               flushList();
               inCode = true;
@@ -160,10 +220,20 @@
           }
 
           if (!line.trim()) {
+            flushTable();
             flushParagraph();
             flushList();
             continue;
           }
+
+          if (parseTableRow(line)) {
+            flushParagraph();
+            flushList();
+            table.push(line);
+            continue;
+          }
+
+          flushTable();
 
           const heading = line.match(/^(#{1,3})\s+(.+)$/);
           if (heading) {
@@ -195,6 +265,7 @@
         if (inCode) {
           html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
         }
+        flushTable();
         flushParagraph();
         flushList();
         return html.join("");
@@ -208,10 +279,6 @@
         target.innerHTML = renderMarkdown(target.dataset.raw);
       }
 
-      function byId(prefix, id) {
-        return document.getElementById(`${prefix}-${id}`);
-      }
-
       function scrollToBottom() {
         const scroller = document.getElementById("chat-scroll");
         const anchor = document.getElementById("scroll-anchor");
@@ -222,7 +289,9 @@
           if (anchor) {
             anchor.scrollIntoView({ block: "end" });
           }
-          document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight;
+          if (document.scrollingElement) {
+            document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight;
+          }
         };
 
         applyScroll();
@@ -233,9 +302,93 @@
       }
 
       function collapseReasoning(messageId) {
-        const details = document.querySelector(`[data-message-id="${messageId}"] .reasoning`);
-        if (details) {
+        document.querySelectorAll(`[data-message-id="${messageId}"] .reasoning`).forEach((details) => {
           details.open = false;
+        });
+      }
+
+      function assistantParts(messageId) {
+        return document.getElementById(`parts-${messageId}`);
+      }
+
+      function lastPart(messageId, type) {
+        const parts = assistantParts(messageId);
+        const last = parts?.lastElementChild;
+        return last?.dataset.partType === type ? last : null;
+      }
+
+      function appendReasoningDelta(messageId, delta) {
+        const parts = assistantParts(messageId);
+        if (!parts) return;
+        let item = lastPart(messageId, "reasoning");
+        if (!item) {
+          item = document.createElement("details");
+          item.className = "reasoning";
+          item.open = true;
+          item.dataset.partType = "reasoning";
+          item.innerHTML = "<summary>Thinking</summary><pre></pre>";
+          parts.appendChild(item);
+        }
+        item.querySelector("pre").textContent += delta;
+        scrollToBottom();
+      }
+
+      function appendAnswerDelta(messageId, delta) {
+        const parts = assistantParts(messageId);
+        if (!parts) return;
+        let item = lastPart(messageId, "answer");
+        if (!item) {
+          item = document.createElement("div");
+          item.className = "answer markdown-body";
+          item.dataset.partType = "answer";
+          item.dataset.raw = "";
+          parts.appendChild(item);
+        }
+        item.dataset.raw = (item.dataset.raw || item.textContent) + delta;
+        renderAnswer(item);
+        collapseReasoning(messageId);
+        scrollToBottom();
+      }
+
+      function appendToolMessage(messageId, message) {
+        const parts = assistantParts(messageId);
+        if (!parts) return;
+        const article = document.createElement("article");
+        article.className = "message tool-message inline-tool-message";
+        article.dataset.partType = "tool";
+        article.innerHTML = `
+          <div class="tool-card">
+            <div class="tool-card-header">
+              <span>${escapeHtml(message.name || "tool")}</span>
+              <span class="message-status ${escapeHtml(message.status || "")}">${escapeHtml(message.status || "")}</span>
+            </div>
+            <details>
+              <summary>查看工具参数和结果</summary>
+              <pre>${escapeHtml(JSON.stringify({ arguments: message.arguments, result: message.result }, null, 2))}</pre>
+            </details>
+          </div>
+        `;
+        parts.appendChild(article);
+        scrollToBottom();
+      }
+
+      document.querySelectorAll(".assistant-parts").forEach((parts) => {
+        for (const child of parts.children) {
+          if (child.classList.contains("reasoning")) {
+            child.dataset.partType = "reasoning";
+          } else if (child.classList.contains("answer")) {
+            child.dataset.partType = "answer";
+          } else if (child.classList.contains("tool-message")) {
+            child.dataset.partType = "tool";
+          }
+        }
+      });
+
+      function setStatus(messageId, value) {
+        const status = document.querySelector(`[data-message-id="${messageId}"] .assistant-status-row .message-status`);
+        if (status) {
+          status.textContent = value;
+          status.className = `message-status ${value}`;
         }
       }
 
@@ -257,45 +410,29 @@
         const conversationId = "{{ conversation.id }}";
         const reasoningOffset = {{ reasoning_offset }};
         const answerOffset = {{ answer_offset }};
+        const toolCount = {{ tool_count }};
         const source = new EventSource(
-          `/conversations/${conversationId}/stream?reasoning_offset=${reasoningOffset}&answer_offset=${answerOffset}`
+          `/conversations/${conversationId}/stream?reasoning_offset=${reasoningOffset}&answer_offset=${answerOffset}&tool_count=${toolCount}`
         );
 
         source.addEventListener("status", (event) => {
           const payload = JSON.parse(event.data);
-          const status = document.querySelector(`[data-message-id="${payload.message_id}"] .message-status`);
-          if (status) {
-            status.textContent = payload.status;
-            status.className = `message-status ${payload.status}`;
-          }
+          setStatus(payload.message_id, payload.status);
         });
 
         source.addEventListener("reasoning", (event) => {
           const payload = JSON.parse(event.data);
-          const target = byId("reasoning", payload.message_id);
-          if (target) {
-            target.textContent += payload.delta;
-            scrollToBottom();
-          }
+          appendReasoningDelta(payload.message_id, payload.delta);
         });
 
         source.addEventListener("answer", (event) => {
           const payload = JSON.parse(event.data);
-          const target = byId("answer", payload.message_id);
-          if (target) {
-            target.dataset.raw = (target.dataset.raw || target.textContent) + payload.delta;
-            renderAnswer(target);
-            collapseReasoning(payload.message_id);
-            scrollToBottom();
-          }
+          appendAnswerDelta(payload.message_id, payload.delta);
         });
 
-        source.addEventListener("dingding", (event) => {
+        source.addEventListener("tool_call_result", (event) => {
           const payload = JSON.parse(event.data);
-          const target = byId("dingding", payload.message_id);
-          if (target) {
-            target.textContent = `钉钉：${JSON.stringify(payload.result)}`;
-          }
+          appendToolMessage(payload.message_id, payload.message);
         });
 
         source.addEventListener("error", (event) => {

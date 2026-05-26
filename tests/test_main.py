@@ -1,39 +1,94 @@
+import copy
+
 from app import main
 
 
-def test_run_conversation_turn_pushes_business_notice_prefix(monkeypatch, tmp_path):
+def test_run_conversation_turn_uses_tool_call_for_dingtalk(monkeypatch, tmp_path):
     sent = {}
     store = main.TaskStore(tmp_path / "tasks.json")
-    conversation = store.create_conversation("hello")
+    scheduled = main.ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
+    app_settings = main.AppSettingsStore(tmp_path / "settings.json")
+    conversation = store.create_conversation("send a notice")
     assistant = conversation["messages"][-1]
 
     class FakeDeepSeekClient:
         def __init__(self, **kwargs):
-            pass
+            self.calls = 0
 
-        def stream_chat(self, messages):
-            sent["messages"] = messages
-            yield "reasoning", "private thought"
-            yield "answer", "world"
+        def stream_agent_turn(self, messages, tools):
+            self.calls += 1
+            sent.setdefault("messages", []).append(copy.deepcopy(messages))
+            if self.calls == 1:
+                yield {"type": "reasoning", "delta": "thinking"}
+                yield {
+                    "type": "tool_calls",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "send_dingtalk_message",
+                                "arguments": '{"title":"Hello","text":"World"}',
+                            },
+                        }
+                    ],
+                }
+            else:
+                yield {"type": "answer", "delta": "done"}
+                yield {"type": "done", "finish_reason": "stop"}
 
-    class FakeDingdingRobot:
+    class FakeToolRunner:
         def __init__(self, **kwargs):
             pass
 
-        def send_markdown(self, title, text):
-            sent["title"] = title
-            sent["text"] = text
-            return {"errcode": 0}
+        def run(self, name, arguments):
+            sent["tool_name"] = name
+            sent["tool_arguments"] = arguments
+            return {"ok": True, "result": {"errcode": 0}}
 
     monkeypatch.setattr(main, "store", store)
+    monkeypatch.setattr(main, "scheduled_task_store", scheduled)
+    monkeypatch.setattr(main, "app_settings_store", app_settings)
     monkeypatch.setattr(main, "DeepSeekClient", FakeDeepSeekClient)
-    monkeypatch.setattr(main, "DingdingRobot", FakeDingdingRobot)
+    monkeypatch.setattr(main, "AgentToolRunner", FakeToolRunner)
 
     main.run_conversation_turn(conversation["id"], assistant["id"])
     updated = store.get_conversation(conversation["id"])
 
-    assert sent["messages"] == [{"role": "user", "content": "hello"}]
-    assert sent["title"].startswith("[业务通知]")
-    assert sent["text"].startswith("[业务通知]")
-    assert "private thought" not in sent["text"]
-    assert updated["messages"][-1]["dingding_result"] == {"errcode": 0}
+    assert sent["messages"][0] == [{"role": "user", "content": "send a notice"}]
+    assert sent["messages"][1][1] == {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "send_dingtalk_message",
+                    "arguments": '{"title":"Hello","text":"World"}',
+                },
+            }
+        ],
+        "reasoning_content": "thinking",
+    }
+    assert sent["tool_name"] == "send_dingtalk_message"
+    assert sent["tool_arguments"] == {"title": "Hello", "text": "World"}
+    assert [part["type"] for part in updated["messages"][-2]["parts"]] == ["reasoning", "tool", "answer"]
+    assert updated["messages"][-2]["parts"][1]["name"] == "send_dingtalk_message"
+    assert updated["messages"][-2]["content"] == "done"
+    assert updated["messages"][-1]["role"] == "tool"
+    assert updated["messages"][-1]["inline_rendered"] is True
+    assert updated["messages"][-1]["result"] == {"ok": True, "result": {"errcode": 0}}
+
+
+def test_build_model_context_includes_system_prompt(monkeypatch, tmp_path):
+    store = main.TaskStore(tmp_path / "tasks.json")
+    conversation = store.create_conversation("hello")
+    assistant = conversation["messages"][-1]
+
+    monkeypatch.setattr(main, "store", store)
+
+    assert main.build_model_context(conversation["id"], assistant["id"], "be useful") == [
+        {"role": "system", "content": "be useful"},
+        {"role": "user", "content": "hello"},
+    ]
