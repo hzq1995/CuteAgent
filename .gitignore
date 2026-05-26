@@ -7,4 +7,6 @@ __pycache__/
 .ruff_cache/
 data/tasks.json
 data/conversations/
-data/*
+data/scheduled_tasks.json
+data/settings.json
+data/memories.json
