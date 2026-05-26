@@ -8,10 +8,10 @@ class DeepSeekClient:
         self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
 
-    def stream_chat(self, prompt: str) -> Iterator[tuple[str, str]]:
+    def stream_chat(self, messages: list[dict[str, str]]) -> Iterator[tuple[str, str]]:
         response = self.client.chat.completions.create(
             model=self.model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             stream=True,
             reasoning_effort="high",
             extra_body={"thinking": {"type": "enabled"}},

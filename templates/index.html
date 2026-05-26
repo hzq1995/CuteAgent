@@ -7,41 +7,320 @@
     <link rel="stylesheet" href="/static/styles.css">
   </head>
   <body>
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">DeepSeek V4 Flash</p>
-        <h1>CuteHarness</h1>
-      </div>
-      <form method="post" action="/logout">
-        <button class="ghost" type="submit">退出</button>
-      </form>
-    </header>
-
-    <main class="workspace">
-      <section class="composer">
-        <h2>新任务</h2>
-        <form method="post" action="/tasks" class="prompt-form">
-          <textarea name="prompt" rows="8" placeholder="输入你想让 AI 处理的任务..." required></textarea>
-          <button type="submit">发送并推送钉钉</button>
-        </form>
-      </section>
-
-      <section class="history">
-        <h2>任务记录</h2>
-        {% if tasks %}
-          <div class="task-list">
-            {% for task in tasks %}
-              <a class="task-row" href="/tasks/{{ task.id }}">
-                <span class="status {{ task.status }}">{{ task.status }}</span>
-                <span class="task-title">{{ task.prompt }}</span>
-                <span class="task-time">{{ task.created_at }}</span>
-              </a>
-            {% endfor %}
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">C</span>
+          <div>
+            <p class="brand-title">CuteHarness</p>
+            <p class="brand-subtitle">DeepSeek V4 Flash</p>
           </div>
-        {% else %}
-          <p class="muted">暂无任务。</p>
-        {% endif %}
-      </section>
-    </main>
+        </div>
+
+        <a class="new-chat" href="/">新建对话</a>
+
+        <nav class="conversation-list" aria-label="历史对话">
+          {% for item in conversations %}
+            <a
+              class="conversation-link {% if conversation and item.id == conversation.id %}active{% endif %}"
+              href="/conversations/{{ item.id }}"
+            >
+              <span class="conversation-title">{{ item.title }}</span>
+              <span class="conversation-status {{ item.status }}">{{ item.status }}</span>
+            </a>
+          {% endfor %}
+        </nav>
+
+        <form method="post" action="/logout" class="logout-form">
+          <button class="text-button" type="submit">退出登录</button>
+        </form>
+      </aside>
+
+      <main class="chat-pane">
+        <section class="chat-scroll" id="chat-scroll">
+          {% if conversation %}
+            <div class="chat-header">
+              <p class="kicker">多轮对话</p>
+              <h1>{{ conversation.title }}</h1>
+            </div>
+
+            <div class="message-list">
+              {% for message in conversation.messages %}
+                {% if message.role == "user" %}
+                  <article class="message user-message">
+                    <div class="message-bubble">{{ message.content }}</div>
+                  </article>
+                {% else %}
+                  <article class="message assistant-message" data-message-id="{{ message.id }}">
+                    <div class="assistant-avatar">AI</div>
+                    <div class="assistant-body">
+                      <details class="reasoning" {% if message.status in ["queued", "running"] %}open{% endif %}>
+                        <summary>思考过程 <span class="message-status {{ message.status }}">{{ message.status }}</span></summary>
+                        <pre id="reasoning-{{ message.id }}">{{ message.reasoning_content }}</pre>
+                      </details>
+                      <div class="answer markdown-body" id="answer-{{ message.id }}">{{ message.content }}</div>
+                      <div class="dingding-result" id="dingding-{{ message.id }}">
+                        {% if message.dingding_result %}钉钉：{{ message.dingding_result | tojson }}{% endif %}
+                      </div>
+                    </div>
+                  </article>
+                {% endif %}
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="empty-state">
+              <p class="kicker">CuteHarness</p>
+              <h1>今天要处理什么？</h1>
+              <p>输入一个任务，系统会流式展示思考和回答，并在完成后推送钉钉。</p>
+            </div>
+          {% endif %}
+          <div class="scroll-anchor" id="scroll-anchor" aria-hidden="true"></div>
+        </section>
+
+        <section class="composer-wrap">
+          <form
+            class="composer"
+            method="post"
+            action="{% if conversation %}/conversations/{{ conversation.id }}/messages{% else %}/conversations{% endif %}"
+          >
+            <textarea
+              name="prompt"
+              rows="1"
+              placeholder="{% if is_running %}当前回复生成中...{% else %}发送消息给 CuteHarness{% endif %}"
+              {% if is_running %}disabled{% endif %}
+              required
+            ></textarea>
+            <button type="submit" {% if is_running %}disabled{% endif %}>发送</button>
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      const form = document.querySelector(".composer");
+      const textarea = document.querySelector(".composer textarea");
+      const button = document.querySelector(".composer button");
+
+      function escapeHtml(value) {
+        return value
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function renderInlineMarkdown(value) {
+        return escapeHtml(value)
+          .replace(/`([^`]+)`/g, "<code>$1</code>")
+          .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+          .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+          .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+      }
+
+      function renderMarkdown(source) {
+        const lines = source.replace(/\r\n/g, "\n").split("\n");
+        const html = [];
+        let paragraph = [];
+        let list = [];
+        let inCode = false;
+        let codeLines = [];
+
+        function flushParagraph() {
+          if (paragraph.length) {
+            html.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
+            paragraph = [];
+          }
+        }
+
+        function flushList() {
+          if (list.length) {
+            html.push(`<ul>${list.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("")}</ul>`);
+            list = [];
+          }
+        }
+
+        for (const line of lines) {
+          if (line.trim().startsWith("```")) {
+            if (inCode) {
+              html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+              codeLines = [];
+              inCode = false;
+            } else {
+              flushParagraph();
+              flushList();
+              inCode = true;
+            }
+            continue;
+          }
+
+          if (inCode) {
+            codeLines.push(line);
+            continue;
+          }
+
+          if (!line.trim()) {
+            flushParagraph();
+            flushList();
+            continue;
+          }
+
+          const heading = line.match(/^(#{1,3})\s+(.+)$/);
+          if (heading) {
+            flushParagraph();
+            flushList();
+            html.push(`<h${heading[1].length}>${renderInlineMarkdown(heading[2])}</h${heading[1].length}>`);
+            continue;
+          }
+
+          const listItem = line.match(/^\s*[-*]\s+(.+)$/);
+          if (listItem) {
+            flushParagraph();
+            list.push(listItem[1]);
+            continue;
+          }
+
+          const quote = line.match(/^>\s?(.+)$/);
+          if (quote) {
+            flushParagraph();
+            flushList();
+            html.push(`<blockquote>${renderInlineMarkdown(quote[1])}</blockquote>`);
+            continue;
+          }
+
+          flushList();
+          paragraph.push(line.trim());
+        }
+
+        if (inCode) {
+          html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+        }
+        flushParagraph();
+        flushList();
+        return html.join("");
+      }
+
+      function renderAnswer(target) {
+        if (!target) return;
+        if (target.dataset.raw === undefined) {
+          target.dataset.raw = target.textContent;
+        }
+        target.innerHTML = renderMarkdown(target.dataset.raw);
+      }
+
+      function byId(prefix, id) {
+        return document.getElementById(`${prefix}-${id}`);
+      }
+
+      function scrollToBottom() {
+        const scroller = document.getElementById("chat-scroll");
+        const anchor = document.getElementById("scroll-anchor");
+        if (!scroller) return;
+
+        const applyScroll = () => {
+          scroller.scrollTop = scroller.scrollHeight;
+          if (anchor) {
+            anchor.scrollIntoView({ block: "end" });
+          }
+          document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight;
+        };
+
+        applyScroll();
+        requestAnimationFrame(() => {
+          applyScroll();
+          requestAnimationFrame(applyScroll);
+        });
+      }
+
+      function collapseReasoning(messageId) {
+        const details = document.querySelector(`[data-message-id="${messageId}"] .reasoning`);
+        if (details) {
+          details.open = false;
+        }
+      }
+
+      document.querySelectorAll(".answer").forEach(renderAnswer);
+      scrollToBottom();
+
+      if (textarea && form) {
+        textarea.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            if (!textarea.disabled && textarea.value.trim()) {
+              form.requestSubmit();
+            }
+          }
+        });
+      }
+
+      {% if conversation and is_running %}
+        const conversationId = "{{ conversation.id }}";
+        const reasoningOffset = {{ reasoning_offset }};
+        const answerOffset = {{ answer_offset }};
+        const source = new EventSource(
+          `/conversations/${conversationId}/stream?reasoning_offset=${reasoningOffset}&answer_offset=${answerOffset}`
+        );
+
+        source.addEventListener("status", (event) => {
+          const payload = JSON.parse(event.data);
+          const status = document.querySelector(`[data-message-id="${payload.message_id}"] .message-status`);
+          if (status) {
+            status.textContent = payload.status;
+            status.className = `message-status ${payload.status}`;
+          }
+        });
+
+        source.addEventListener("reasoning", (event) => {
+          const payload = JSON.parse(event.data);
+          const target = byId("reasoning", payload.message_id);
+          if (target) {
+            target.textContent += payload.delta;
+            scrollToBottom();
+          }
+        });
+
+        source.addEventListener("answer", (event) => {
+          const payload = JSON.parse(event.data);
+          const target = byId("answer", payload.message_id);
+          if (target) {
+            target.dataset.raw = (target.dataset.raw || target.textContent) + payload.delta;
+            renderAnswer(target);
+            collapseReasoning(payload.message_id);
+            scrollToBottom();
+          }
+        });
+
+        source.addEventListener("dingding", (event) => {
+          const payload = JSON.parse(event.data);
+          const target = byId("dingding", payload.message_id);
+          if (target) {
+            target.textContent = `钉钉：${JSON.stringify(payload.result)}`;
+          }
+        });
+
+        source.addEventListener("error", (event) => {
+          const payload = JSON.parse(event.data);
+          const target = document.querySelector(`[data-message-id="${payload.message_id}"] .assistant-body`);
+          if (target) {
+            const error = document.createElement("p");
+            error.className = "error";
+            error.textContent = payload.error;
+            target.appendChild(error);
+          }
+          source.close();
+        });
+
+        source.addEventListener("done", (event) => {
+          const payload = JSON.parse(event.data);
+          source.close();
+          collapseReasoning(payload.message_id);
+          textarea.disabled = false;
+          button.disabled = false;
+          textarea.placeholder = "发送消息给 CuteHarness";
+          form.classList.remove("disabled");
+          scrollToBottom();
+        });
+      {% endif %}
+    </script>
   </body>
 </html>

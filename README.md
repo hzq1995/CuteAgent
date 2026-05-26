@@ -1,6 +1,6 @@
 # CuteHarness
 
-CuteHarness is a small FastAPI web app that accepts a password-protected prompt, streams DeepSeek V4 Flash thinking and final-answer output to the browser, and sends the final answer to DingTalk.
+CuteHarness is a small FastAPI web app for password-protected multi-turn chat. It streams DeepSeek V4 Flash thinking and final-answer output to the browser, then sends each completed assistant answer to DingTalk.
 
 ## Setup
 
@@ -24,4 +24,4 @@ The local `.env` file contains the DeepSeek API key and a generated app password
 
 ## Data
 
-Task records are stored in `data/tasks.json`.
+Conversation records are stored in `data/tasks.json`. Older single-turn task records are normalized into conversations when read.

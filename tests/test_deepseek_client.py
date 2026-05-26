@@ -17,7 +17,7 @@ class FakeChunk:
         self.choices = [FakeChoice(delta)]
 
 
-def test_stream_chat_uses_v4_flash_thinking(monkeypatch):
+def test_stream_chat_uses_multiturn_v4_flash_thinking(monkeypatch):
     captured = {}
 
     class FakeCompletions:
@@ -34,8 +34,15 @@ def test_stream_chat_uses_v4_flash_thinking(monkeypatch):
 
     monkeypatch.setattr("app.deepseek_client.OpenAI", FakeClient)
 
+    messages = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi"},
+        {"role": "user", "content": "again"},
+    ]
     client = DeepSeekClient("key", "https://api.deepseek.com", "deepseek-v4-flash")
-    assert list(client.stream_chat("hello")) == [("reasoning", "think"), ("answer", "answer")]
+
+    assert list(client.stream_chat(messages)) == [("reasoning", "think"), ("answer", "answer")]
+    assert captured["messages"] == messages
     assert captured["model"] == "deepseek-v4-flash"
     assert captured["stream"] is True
     assert captured["reasoning_effort"] == "high"
