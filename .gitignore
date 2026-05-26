@@ -6,4 +6,4 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 data/tasks.json
-data/
+data/conversations/

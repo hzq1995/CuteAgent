@@ -10,12 +10,10 @@ from app.atomic_io import write_json_atomic
 
 class TaskStore:
     def __init__(self, dir_path: Path):
-        self.legacy_path = dir_path if dir_path.suffix == ".json" else dir_path.parent / "tasks.json"
-        self.dir = dir_path.parent / "conversations" if dir_path.suffix == ".json" else dir_path
+        self.dir = dir_path
         self.lock = threading.Lock()
         self.dir.mkdir(parents=True, exist_ok=True)
         self._next_seq = self._compute_next_seq()
-        self._migrate_legacy()
 
     # ------------------------------------------------------------------
     # Public API
@@ -165,6 +163,18 @@ class TaskStore:
             self._write_one(conversation)
             return message
 
+    def append_api_message(
+        self, conversation_id: str, assistant_message_id: str, api_message: dict[str, Any]
+    ) -> dict[str, Any]:
+        with self.lock:
+            conversation = self._read_one_or_raise(conversation_id)
+            assistant = self._find_message(conversation, assistant_message_id)
+            assistant.setdefault("api_messages", []).append(api_message)
+            assistant["updated_at"] = utc_now()
+            conversation["updated_at"] = assistant["updated_at"]
+            self._write_one(conversation)
+            return assistant
+
     def has_running_message(self, conversation_id: str) -> bool:
         conversation = self.get_conversation(conversation_id)
         return bool(conversation and has_running_message(conversation))
@@ -175,15 +185,27 @@ class TaskStore:
             raise KeyError(f"Conversation not found: {conversation_id}")
 
         messages = []
+        api_tool_call_ids = {
+            item.get("tool_call_id")
+            for message in conversation["messages"]
+            for item in message.get("api_messages", [])
+            if item.get("role") == "tool"
+        }
         for message in conversation["messages"]:
             if message["id"] == through_message_id:
                 break
-            if message["role"] not in {"user", "assistant", "tool"}:
+            role = message["role"]
+            if role not in {"user", "assistant", "tool"}:
                 continue
-            if message["role"] == "assistant" and not message["content"].strip() and not message.get("tool_calls"):
+            if role == "assistant" and message.get("api_messages"):
+                messages.extend(message["api_messages"])
                 continue
-            if message["role"] == "tool":
+            if role == "assistant" and not message["content"].strip() and not message.get("tool_calls"):
+                continue
+            if role == "tool":
                 if not message.get("tool_call_id"):
+                    continue
+                if message.get("inline_rendered") and message["tool_call_id"] in api_tool_call_ids:
                     continue
                 item = {
                     "role": "tool",
@@ -218,24 +240,6 @@ class TaskStore:
             except (ValueError, IndexError):
                 pass
         return max_seq + 1
-
-    def _migrate_legacy(self) -> None:
-        legacy = self.legacy_path
-        if not legacy.exists() or any(self.dir.glob("*.json")):
-            return
-        try:
-            raw = json.loads(legacy.read_text(encoding="utf-8"))
-            if not isinstance(raw, list):
-                return
-            conversations = sorted(
-                [normalize_conversation(item) for item in raw],
-                key=lambda c: c["created_at"],
-            )
-            for i, conv in enumerate(conversations, start=1):
-                self._write_file(i, conv)
-            self._next_seq = len(conversations) + 1
-        except Exception:
-            pass
 
     def _conversation_path(self, conversation_id: str) -> Path | None:
         matches = list(self.dir.glob(f"*-{conversation_id}.json"))
@@ -353,6 +357,7 @@ def normalize_message(message: dict[str, Any]) -> None:
     message.setdefault("result", None)
     message.setdefault("parts", [])
     message.setdefault("inline_rendered", False)
+    message.setdefault("api_messages", [])
 
 
 def new_message(role: str, content: str, status: str) -> dict[str, Any]:
@@ -371,9 +376,9 @@ def new_message(role: str, content: str, status: str) -> dict[str, Any]:
 
 
 def model_message_from_stored(message: dict[str, Any]) -> dict[str, Any]:
-    item: dict[str, Any] = {"role": message["role"], "content": message["content"] or None}
+    item: dict[str, Any] = {"role": message["role"], "content": message["content"]}
     if message["role"] == "assistant":
-        item["reasoning_content"] = message.get("reasoning_content") or None
+        item["reasoning_content"] = message.get("reasoning_content", "")
         if message.get("tool_calls"):
             item["tool_calls"] = message["tool_calls"]
     return item

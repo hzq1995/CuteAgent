@@ -51,6 +51,7 @@ async def auth_exception_handler(request: Request, exc: HTTPException) -> Redire
 
 @app.on_event("startup")
 async def start_scheduler() -> None:
+    scheduled_task_store.mark_interrupted_runs()
     app.state.scheduler_task = asyncio.create_task(scheduler_loop())
 
 
@@ -406,11 +407,12 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
                     store.attach_tool_calls(conversation_id, assistant_message_id, tool_calls)
                     assistant_message: dict = {
                         "role": "assistant",
-                        "content": assistant_protocol_content or None,
-                        "reasoning_content": assistant_protocol_reasoning or None,
+                        "content": assistant_protocol_content,
+                        "reasoning_content": assistant_protocol_reasoning,
                         "tool_calls": tool_calls,
                     }
                     messages.append(assistant_message)
+                    store.append_api_message(conversation_id, assistant_message_id, assistant_message)
                     for tool_call in tool_calls:
                         function = tool_call["function"]
                         arguments = parse_tool_arguments(function.get("arguments", ""))
@@ -431,9 +433,20 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
                                 "content": json.dumps(result, ensure_ascii=False),
                             }
                         )
+                        store.append_api_message(conversation_id, assistant_message_id, messages[-1])
                     break
 
             if not requested_tools:
+                if assistant_protocol_content or assistant_protocol_reasoning:
+                    store.append_api_message(
+                        conversation_id,
+                        assistant_message_id,
+                        {
+                            "role": "assistant",
+                            "content": assistant_protocol_content,
+                            "reasoning_content": assistant_protocol_reasoning,
+                        },
+                    )
                 break
 
         store.update_message(conversation_id, assistant_message_id, status="succeeded")
@@ -454,18 +467,35 @@ def build_model_context(conversation_id: str, assistant_message_id: str, system_
 async def scheduler_loop() -> None:
     while True:
         for task in scheduled_task_store.claim_due_tasks():
-            asyncio.create_task(run_scheduled_task(task))
+            scheduled = asyncio.create_task(run_scheduled_task(task))
+            scheduled.add_done_callback(log_scheduled_task_failure)
         await asyncio.sleep(20)
 
 
 async def run_scheduled_task(task: dict) -> None:
-    conversation = store.create_conversation(task["prompt"])
-    assistant = conversation["messages"][-1]
-    await asyncio.to_thread(run_conversation_turn, conversation["id"], assistant["id"])
-    updated = store.get_conversation(conversation["id"])
-    status = (updated or {}).get("status", "unknown")
-    error = (updated or {}).get("error", "")
-    scheduled_task_store.mark_result(task["id"], f"conversation:{conversation['id']} status:{status}", error)
+    conversation = None
+    try:
+        conversation = store.create_conversation(task["prompt"])
+        assistant = conversation["messages"][-1]
+        await asyncio.to_thread(run_conversation_turn, conversation["id"], assistant["id"])
+        updated = store.get_conversation(conversation["id"])
+        status = (updated or {}).get("status", "unknown")
+        error = (updated or {}).get("error", "")
+        scheduled_task_store.mark_result(task["id"], f"conversation:{conversation['id']} status:{status}", error)
+    except Exception as exc:
+        if conversation:
+            with suppress(Exception):
+                store.update_conversation(conversation["id"], status="failed", error=str(exc))
+            scheduled_task_store.mark_result(task["id"], f"conversation:{conversation['id']} status:failed", str(exc))
+        else:
+            scheduled_task_store.mark_result(task["id"], "failed before conversation", str(exc))
+
+
+def log_scheduled_task_failure(task: asyncio.Task) -> None:
+    with suppress(asyncio.CancelledError):
+        exc = task.exception()
+        if exc:
+            print(f"Scheduled task crashed: {exc}")
 
 
 def normalize_tool_calls(tool_calls: list[dict]) -> list[dict]:

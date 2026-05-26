@@ -24,7 +24,7 @@ The local `.env` file contains the DeepSeek API key and app password. Configure 
 
 ## Data
 
-Conversation records are stored in `data/tasks.json`. Older single-turn task records are normalized into conversations when read.
+Conversation records are stored as individual JSON files under `data/conversations/`.
 
 Application scheduled tasks are stored in `data/scheduled_tasks.json`, and UI-editable Agent settings are stored in `data/settings.json`.
 

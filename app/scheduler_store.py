@@ -134,6 +134,19 @@ class ScheduledTaskStore:
             task["updated_at"] = now_local().isoformat()
             self._write(tasks)
 
+    def mark_interrupted_runs(self) -> None:
+        with self.lock:
+            tasks = self._read()
+            changed = False
+            for task in tasks:
+                if task.get("last_result") == "running":
+                    task["last_result"] = "failed"
+                    task["error"] = "Scheduler restarted before this run completed"
+                    task["updated_at"] = now_local().isoformat()
+                    changed = True
+            if changed:
+                self._write(tasks)
+
     def _read(self) -> list[dict[str, Any]]:
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))

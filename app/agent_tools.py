@@ -44,7 +44,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "create_scheduled_task",
-            "description": "Create a CuteHarness application scheduled task. schedule_type must be once, daily, or interval_minutes. Remember to use send_dingtalk_message in schedule value param, to notify user about the result of the scheduled task.",
+            "description": "Create a CuteHarness application scheduled task. schedule_type must be once, daily, or interval_minutes. Remember to remind using send_dingtalk_message in schedule value, to send a message to user.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -74,7 +74,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "send_dingtalk_message",
-            "description": "Send a DingTalk markdown message. The tool automatically prefixes title and text with [业务通知].",
+            "description": "Send a DingTalk markdown message to user. When we say '发送消息' or other similar words, it means you should call this tool.",
             "parameters": {
                 "type": "object",
                 "properties": {
