@@ -9,6 +9,7 @@ def test_run_conversation_turn_uses_tool_call_for_dingtalk(monkeypatch, tmp_path
     store = main.TaskStore(tmp_path / "conversations")
     scheduled = main.ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
     app_settings = main.AppSettingsStore(tmp_path / "settings.json")
+    memories = main.MemoryStore(tmp_path / "memories.json")
     conversation = store.create_conversation("send a notice")
     assistant = conversation["messages"][-1]
 
@@ -50,6 +51,7 @@ def test_run_conversation_turn_uses_tool_call_for_dingtalk(monkeypatch, tmp_path
     monkeypatch.setattr(main, "store", store)
     monkeypatch.setattr(main, "scheduled_task_store", scheduled)
     monkeypatch.setattr(main, "app_settings_store", app_settings)
+    monkeypatch.setattr(main, "memory_store", memories)
     monkeypatch.setattr(main, "DeepSeekClient", FakeDeepSeekClient)
     monkeypatch.setattr(main, "AgentToolRunner", FakeToolRunner)
 
@@ -113,10 +115,12 @@ def test_run_conversation_turn_uses_tool_call_for_dingtalk(monkeypatch, tmp_path
 
 def test_build_model_context_includes_system_prompt(monkeypatch, tmp_path):
     store = main.TaskStore(tmp_path / "conversations")
+    memories = main.MemoryStore(tmp_path / "memories.json")
     conversation = store.create_conversation("hello")
     assistant = conversation["messages"][-1]
 
     monkeypatch.setattr(main, "store", store)
+    monkeypatch.setattr(main, "memory_store", memories)
 
     assert main.build_model_context(conversation["id"], assistant["id"], "be useful") == [
         {"role": "system", "content": "be useful"},
@@ -124,10 +128,47 @@ def test_build_model_context_includes_system_prompt(monkeypatch, tmp_path):
     ]
 
 
+def test_build_model_context_appends_memories_after_system_prompt(monkeypatch, tmp_path):
+    store = main.TaskStore(tmp_path / "conversations")
+    memories = main.MemoryStore(tmp_path / "memories.json")
+    memory = memories.add_memory("用户喜欢简洁中文回答")["memory"]
+    conversation = store.create_conversation("hello")
+    assistant = conversation["messages"][-1]
+
+    monkeypatch.setattr(main, "store", store)
+    monkeypatch.setattr(main, "memory_store", memories)
+
+    context = main.build_model_context(conversation["id"], assistant["id"], "be useful")
+
+    assert context[0]["role"] == "system"
+    assert context[0]["content"].startswith("be useful\n\n记忆：\n")
+    assert f"{memory['id']} 用户喜欢简洁中文回答" in context[0]["content"]
+    assert context[1] == {"role": "user", "content": "hello"}
+
+
+def test_build_model_context_injects_memories_without_system_prompt(monkeypatch, tmp_path):
+    store = main.TaskStore(tmp_path / "conversations")
+    memories = main.MemoryStore(tmp_path / "memories.json")
+    memory = memories.add_memory("用户使用 FastAPI")["memory"]
+    conversation = store.create_conversation("hello")
+    assistant = conversation["messages"][-1]
+
+    monkeypatch.setattr(main, "store", store)
+    monkeypatch.setattr(main, "memory_store", memories)
+
+    context = main.build_model_context(conversation["id"], assistant["id"], "")
+
+    assert context[0]["role"] == "system"
+    assert context[0]["content"].startswith("记忆：\n")
+    assert f"{memory['id']} 用户使用 FastAPI" in context[0]["content"]
+    assert context[1] == {"role": "user", "content": "hello"}
+
+
 def test_run_scheduled_task_creates_visible_conversation(monkeypatch, tmp_path):
     store = main.TaskStore(tmp_path / "conversations")
     scheduled = main.ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
     app_settings = main.AppSettingsStore(tmp_path / "settings.json")
+    memories = main.MemoryStore(tmp_path / "memories.json")
     task = scheduled.create_task("notice", "send scheduled notice", "once", "2026-12-01 09:00", True)
 
     class FakeDeepSeekClient:
@@ -141,6 +182,7 @@ def test_run_scheduled_task_creates_visible_conversation(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "store", store)
     monkeypatch.setattr(main, "scheduled_task_store", scheduled)
     monkeypatch.setattr(main, "app_settings_store", app_settings)
+    monkeypatch.setattr(main, "memory_store", memories)
     monkeypatch.setattr(main, "DeepSeekClient", FakeDeepSeekClient)
 
     asyncio.run(main.run_scheduled_task(task))

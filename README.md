@@ -26,7 +26,7 @@ The local `.env` file contains the DeepSeek API key and app password. Configure 
 
 Conversation records are stored as individual JSON files under `data/conversations/`.
 
-Application scheduled tasks are stored in `data/scheduled_tasks.json`, and UI-editable Agent settings are stored in `data/settings.json`.
+Application scheduled tasks are stored in `data/scheduled_tasks.json`, UI-editable Agent settings are stored in `data/settings.json`, and global Agent memories are stored in `data/memories.json`.
 
 ## Agent Tools
 
@@ -34,6 +34,9 @@ Application scheduled tasks are stored in `data/scheduled_tasks.json`, and UI-ed
 - `list_scheduled_tasks`: lists CuteHarness application scheduled tasks.
 - `create_scheduled_task`: creates an application scheduled task.
 - `delete_scheduled_task`: deletes an application scheduled task.
+- `add_memory`: adds a key, durable, non-duplicate long-term memory.
+- `update_memory`: updates an existing memory by id.
+- `delete_memory`: deletes an existing memory by id.
 - `send_dingtalk_message`: sends a DingTalk markdown message and automatically prefixes title and body with `[业务通知]`.
 
 DingTalk is no longer pushed automatically after every reply. The Agent sends DingTalk messages only when it calls `send_dingtalk_message`.

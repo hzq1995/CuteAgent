@@ -1,6 +1,7 @@
 import asyncio
 import json
 from contextlib import suppress
+from datetime import datetime
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -12,6 +13,7 @@ from app.agent_tools import TOOL_DEFINITIONS, AgentToolRunner, parse_tool_argume
 from app.app_settings import AppSettingsStore
 from app.config import BASE_DIR, get_settings
 from app.deepseek_client import DeepSeekClient
+from app.memory_store import MemoryStore
 from app.scheduler_store import ScheduledTaskStore
 from app.storage import TaskStore
 
@@ -31,6 +33,7 @@ templates = Jinja2Templates(directory=BASE_DIR / "templates")
 store = TaskStore(BASE_DIR / "data" / "conversations")
 scheduled_task_store = ScheduledTaskStore(BASE_DIR / "data" / "scheduled_tasks.json")
 app_settings_store = AppSettingsStore(BASE_DIR / "data" / "settings.json")
+memory_store = MemoryStore(BASE_DIR / "data" / "memories.json")
 
 
 def require_login(request: Request) -> None:
@@ -300,7 +303,8 @@ async def settings_page(request: Request):
         return redirect
     return templates.TemplateResponse(
         "settings.html",
-        base_context(request, active_page="settings") | {"app_settings": app_settings_store.get(), "saved": False},
+        base_context(request, active_page="settings")
+        | {"app_settings": app_settings_store.get(), "memories": memory_store.list_memories(), "saved": False},
     )
 
 
@@ -315,8 +319,26 @@ async def update_settings(
     values = app_settings_store.update(system_prompt, python_timeout_seconds, max_tool_rounds)
     return templates.TemplateResponse(
         "settings.html",
-        base_context(request, active_page="settings") | {"app_settings": values, "saved": True},
+        base_context(request, active_page="settings")
+        | {"app_settings": values, "memories": memory_store.list_memories(), "saved": True},
     )
+
+
+@app.post("/memories/{memory_id}")
+async def update_memory(memory_id: str, request: Request, content: str = Form("")):
+    require_login(request)
+    try:
+        memory_store.update_memory(memory_id, content)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return RedirectResponse("/settings", status_code=303)
+
+
+@app.post("/memories/{memory_id}/delete")
+async def delete_memory(memory_id: str, request: Request):
+    require_login(request)
+    memory_store.delete_memory(memory_id)
+    return RedirectResponse("/settings", status_code=303)
 
 
 @app.post("/tasks")
@@ -379,6 +401,7 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
         tool_runner = AgentToolRunner(
             base_dir=BASE_DIR,
             scheduled_tasks=scheduled_task_store,
+            memories=memory_store,
             python_timeout_seconds=app_config["python_timeout_seconds"],
             dingtalk_webhook_url=settings.dingtalk_webhook_url,
             dingtalk_access_token=settings.dingtalk_access_token,
@@ -458,10 +481,40 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
 
 def build_model_context(conversation_id: str, assistant_message_id: str, system_prompt: str) -> list[dict]:
     messages: list[dict] = []
-    if system_prompt.strip():
-        messages.append({"role": "system", "content": system_prompt.strip()})
+    system_content = build_system_prompt(system_prompt, memory_store.list_memories())
+    if system_content:
+        messages.append({"role": "system", "content": system_content})
     messages.extend(store.chat_context(conversation_id, assistant_message_id))
     return messages
+
+
+def build_system_prompt(system_prompt: str, memories: list[dict]) -> str:
+    parts = []
+    if system_prompt.strip():
+        parts.append(system_prompt.strip())
+    memory_block = format_memory_block(memories)
+    if memory_block:
+        parts.append(memory_block)
+    return "\n\n".join(parts)
+
+
+def format_memory_block(memories: list[dict]) -> str:
+    lines = []
+    for memory in memories:
+        content = (memory.get("content") or "").strip()
+        if not content:
+            continue
+        lines.append(f"{format_memory_time(memory.get('updated_at', ''))} {memory.get('id', '')} {content}".strip())
+    if not lines:
+        return ""
+    return "记忆：\n" + "\n".join(lines)
+
+
+def format_memory_time(value: str) -> str:
+    try:
+        return datetime.fromisoformat(value).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return value[:16] if value else ""
 
 
 async def scheduler_loop() -> None:

@@ -5,6 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from app.memory_store import MemoryStore
 from app.scheduler_store import ScheduledTaskStore
 from utils.dingding_robot import DingdingRobot
 
@@ -73,6 +74,51 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "add_memory",
+            "description": (
+                "Add a long-term CuteHarness memory. Only save key, durable, non-duplicate facts or preferences "
+                "that will be useful in future conversations. Do not save temporary chat context, one-off tasks, "
+                "irrelevant sensitive data, or information already present in existing memories."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "Concise memory content to persist."},
+                },
+                "required": ["content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_memory",
+            "description": "Update an existing CuteHarness memory by id when the remembered fact or preference changes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "memory_id": {"type": "string", "description": "Memory id shown in the injected memory list."},
+                    "content": {"type": "string", "description": "Replacement memory content."},
+                },
+                "required": ["memory_id", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_memory",
+            "description": "Delete a CuteHarness memory by id when the user asks to forget it or it is no longer true.",
+            "parameters": {
+                "type": "object",
+                "properties": {"memory_id": {"type": "string", "description": "Memory id shown in the injected memory list."}},
+                "required": ["memory_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "send_dingtalk_message",
             "description": "Send a DingTalk markdown message to user. When we say '发送消息' or other similar words, it means you should call this tool.",
             "parameters": {
@@ -93,12 +139,14 @@ class AgentToolRunner:
         self,
         base_dir: Path,
         scheduled_tasks: ScheduledTaskStore,
+        memories: MemoryStore,
         python_timeout_seconds: int,
         dingtalk_webhook_url: str = "",
         dingtalk_access_token: str = "",
     ):
         self.base_dir = base_dir
         self.scheduled_tasks = scheduled_tasks
+        self.memories = memories
         self.python_timeout_seconds = python_timeout_seconds
         self.dingtalk_webhook_url = dingtalk_webhook_url
         self.dingtalk_access_token = dingtalk_access_token
@@ -107,6 +155,9 @@ class AgentToolRunner:
             "list_scheduled_tasks": self.list_scheduled_tasks,
             "create_scheduled_task": self.create_scheduled_task,
             "delete_scheduled_task": self.delete_scheduled_task,
+            "add_memory": self.add_memory,
+            "update_memory": self.update_memory,
+            "delete_memory": self.delete_memory,
             "send_dingtalk_message": self.send_dingtalk_message,
         }
 
@@ -157,6 +208,15 @@ class AgentToolRunner:
 
     def delete_scheduled_task(self, task_id: str) -> dict[str, Any]:
         return {"deleted": self.scheduled_tasks.delete_task(task_id), "task_id": task_id}
+
+    def add_memory(self, content: str) -> dict[str, Any]:
+        return self.memories.add_memory(content)
+
+    def update_memory(self, memory_id: str, content: str) -> dict[str, Any]:
+        return self.memories.update_memory(memory_id, content)
+
+    def delete_memory(self, memory_id: str) -> dict[str, Any]:
+        return self.memories.delete_memory(memory_id)
 
     def send_dingtalk_message(self, title: str, text: str) -> dict[str, Any]:
         robot = DingdingRobot(

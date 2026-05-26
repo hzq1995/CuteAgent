@@ -38,6 +38,34 @@
               <button type="submit">保存设置</button>
             </div>
           </form>
+
+          <section class="memory-section">
+            <div class="page-header compact-header">
+              <p class="kicker">Memory</p>
+              <h2>记忆管理</h2>
+            </div>
+            {% if memories %}
+              <div class="memory-list">
+                {% for memory in memories %}
+                  <article class="memory-row">
+                    <div class="memory-meta">
+                      <span>{{ memory.updated_at[:16].replace("T", " ") }}</span>
+                      <code>{{ memory.id }}</code>
+                    </div>
+                    <form class="memory-form" method="post" action="/memories/{{ memory.id }}">
+                      <textarea name="content" rows="2" required>{{ memory.content }}</textarea>
+                      <button type="submit">保存</button>
+                    </form>
+                    <form class="memory-delete-form" method="post" action="/memories/{{ memory.id }}/delete">
+                      <button class="danger-button" type="submit">删除</button>
+                    </form>
+                  </article>
+                {% endfor %}
+              </div>
+            {% else %}
+              <p class="muted">暂无记忆。AI 会在需要长期保存关键信息时通过工具新增记忆。</p>
+            {% endif %}
+          </section>
         </section>
       </main>
     </div>
