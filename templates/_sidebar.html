@@ -7,15 +7,29 @@
     </div>
   </div>
 
-  <nav class="primary-nav" aria-label="主导航">
-    <a class="nav-link {% if active_page == 'chat' and not conversation %}active{% endif %}" href="/">新建对话</a>
-    <a class="nav-link {% if active_page == 'scheduled_tasks' %}active{% endif %}" href="/scheduled-tasks">定时任务</a>
-    <a class="nav-link {% if active_page == 'settings' %}active{% endif %}" href="/settings">设置</a>
+  <button
+    class="history-toggle"
+    type="button"
+    aria-controls="history-drawer"
+    aria-expanded="false"
+  >
+    &#21382;&#21490;
+  </button>
+
+  <nav class="primary-nav" aria-label="&#20027;&#23548;&#33322;">
+    <a class="nav-link {% if active_page == 'chat' and not conversation %}active{% endif %}" href="/">&#26032;&#24314;&#23545;&#35805;</a>
+    <a class="nav-link {% if active_page == 'scheduled_tasks' %}active{% endif %}" href="/scheduled-tasks">&#23450;&#26102;&#20219;&#21153;</a>
+    <a class="nav-link {% if active_page == 'settings' %}active{% endif %}" href="/settings">&#35774;&#32622;</a>
   </nav>
 
-  <div class="sidebar-section">
-    <p class="sidebar-label">历史对话</p>
-    <nav class="conversation-list" aria-label="历史对话">
+  <div class="sidebar-scrim" data-history-close aria-hidden="true"></div>
+
+  <div class="sidebar-section" id="history-drawer" aria-label="&#21382;&#21490;&#23545;&#35805;">
+    <div class="sidebar-section-head">
+      <p class="sidebar-label">&#21382;&#21490;&#23545;&#35805;</p>
+      <button class="history-close" type="button" data-history-close aria-label="Close history">&#215;</button>
+    </div>
+    <nav class="conversation-list" aria-label="&#21382;&#21490;&#23545;&#35805;">
       {% for item in conversations %}
         <a
           class="conversation-link {% if conversation and item.id == conversation.id %}active{% endif %}"
@@ -29,6 +43,41 @@
   </div>
 
   <form method="post" action="/logout" class="logout-form">
-    <button class="text-button" type="submit">退出登录</button>
+    <button class="text-button" type="submit">&#36864;&#20986;&#30331;&#24405;</button>
   </form>
 </aside>
+
+<script>
+  (() => {
+    const sidebar = document.querySelector(".sidebar");
+    const toggle = document.querySelector(".history-toggle");
+    const drawer = document.getElementById("history-drawer");
+    const closeTargets = document.querySelectorAll("[data-history-close]");
+
+    if (!sidebar || !toggle || !drawer) return;
+
+    function setHistoryOpen(isOpen) {
+      sidebar.classList.toggle("history-open", isOpen);
+      toggle.setAttribute("aria-expanded", String(isOpen));
+      document.body.classList.toggle("history-drawer-open", isOpen);
+    }
+
+    toggle.addEventListener("click", () => {
+      setHistoryOpen(!sidebar.classList.contains("history-open"));
+    });
+
+    closeTargets.forEach((target) => {
+      target.addEventListener("click", () => setHistoryOpen(false));
+    });
+
+    drawer.querySelectorAll("a").forEach((link) => {
+      link.addEventListener("click", () => setHistoryOpen(false));
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        setHistoryOpen(false);
+      }
+    });
+  })();
+</script>
