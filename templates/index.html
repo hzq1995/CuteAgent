@@ -118,9 +118,12 @@
       const form = document.querySelector(".composer");
       const textarea = document.querySelector(".composer textarea");
       const button = document.querySelector(".composer button");
-      const messageList = document.getElementById("message-list");
+      let messageList = document.getElementById("message-list");
+      const originalButtonText = button ? button.textContent : "";
+      let currentSource = null;
 
       function escapeHtml(value) {
+        value = String(value ?? "");
         return value
           .replace(/&/g, "&amp;")
           .replace(/</g, "&lt;")
@@ -302,6 +305,109 @@
         });
       }
 
+      function setComposerBusy(isBusy) {
+        if (!textarea || !button || !form) return;
+        textarea.disabled = isBusy;
+        button.disabled = isBusy;
+        button.textContent = isBusy ? "发送中" : originalButtonText;
+        textarea.placeholder = isBusy ? "等待响应中..." : "发送消息给 CuteHarness";
+        form.classList.toggle("disabled", isBusy);
+      }
+
+      function clearSubmitError() {
+        document.querySelectorAll(".composer-error").forEach((item) => item.remove());
+      }
+
+      function showSubmitError(message) {
+        if (!form) return;
+        clearSubmitError();
+        const error = document.createElement("p");
+        error.className = "composer-error error";
+        error.textContent = message || "发送失败";
+        form.insertAdjacentElement("afterend", error);
+      }
+
+      function ensureMessageList(prompt) {
+        if (messageList) return messageList;
+        const scroller = document.getElementById("chat-scroll");
+        const anchor = document.getElementById("scroll-anchor");
+        if (!scroller) return null;
+
+        document.querySelector(".empty-state")?.remove();
+
+        const header = document.createElement("div");
+        header.className = "chat-header";
+        header.innerHTML = `
+          <p class="kicker">CuteHarness</p>
+          <h1>${escapeHtml((prompt || "New conversation").slice(0, 36))}</h1>
+        `;
+
+        messageList = document.createElement("div");
+        messageList.className = "message-list";
+        messageList.id = "message-list";
+
+        scroller.insertBefore(header, anchor);
+        scroller.insertBefore(messageList, anchor);
+        return messageList;
+      }
+
+      function appendUserMessage(content) {
+        const list = ensureMessageList(content);
+        if (!list) return null;
+        const article = document.createElement("article");
+        article.className = "message user-message";
+        article.innerHTML = `<div class="message-bubble">${escapeHtml(content)}</div>`;
+        list.appendChild(article);
+        scrollToBottom();
+        return article;
+      }
+
+      function appendAssistantPlaceholder(messageId) {
+        const list = ensureMessageList("");
+        if (!list) return null;
+        const article = document.createElement("article");
+        article.className = "message assistant-message assistant-placeholder";
+        article.dataset.messageId = messageId;
+        article.innerHTML = `
+          <div class="assistant-avatar">AI</div>
+          <div class="assistant-body">
+            <div class="assistant-status-row">
+              <span class="message-status queued">queued</span>
+            </div>
+            <div class="assistant-parts" id="parts-${messageId}">
+              <div class="answer markdown-body waiting" data-part-type="answer">等待响应...</div>
+            </div>
+          </div>
+        `;
+        list.appendChild(article);
+        scrollToBottom();
+        return article;
+      }
+
+      function replaceAssistantId(oldId, newId) {
+        if (!oldId || !newId || oldId === newId) return;
+        const article = document.querySelector(`[data-message-id="${oldId}"]`);
+        const parts = document.getElementById(`parts-${oldId}`);
+        if (article) {
+          article.dataset.messageId = newId;
+        }
+        if (parts) {
+          parts.id = `parts-${newId}`;
+        }
+      }
+
+      function markAssistantFailed(messageId, message) {
+        setStatus(messageId, "failed");
+        const target = document.querySelector(`[data-message-id="${messageId}"] .assistant-body`);
+        if (!target) return;
+        target.querySelector(".waiting")?.remove();
+        const error = document.createElement("p");
+        error.className = "error";
+        error.textContent = message || "发送失败";
+        target.appendChild(error);
+        scrollToBottom();
+      }
+
       function collapseReasoning(messageId) {
         document.querySelectorAll(`[data-message-id="${messageId}"] .reasoning`).forEach((details) => {
           details.open = false;
@@ -321,6 +427,7 @@
       function appendReasoningDelta(messageId, delta) {
         const parts = assistantParts(messageId);
         if (!parts) return;
+        parts.querySelector(".waiting")?.remove();
         let item = lastPart(messageId, "reasoning");
         if (!item) {
           item = document.createElement("details");
@@ -337,6 +444,7 @@
       function appendAnswerDelta(messageId, delta) {
         const parts = assistantParts(messageId);
         if (!parts) return;
+        parts.querySelector(".waiting")?.remove();
         let item = lastPart(messageId, "answer");
         if (!item) {
           item = document.createElement("div");
@@ -354,6 +462,7 @@
       function appendToolMessage(messageId, message) {
         const parts = assistantParts(messageId);
         if (!parts) return;
+        parts.querySelector(".waiting")?.remove();
         const article = document.createElement("article");
         article.className = "message tool-message inline-tool-message";
         article.dataset.partType = "tool";
@@ -393,6 +502,77 @@
         }
       }
 
+      function startConversationStream(conversationId, options = {}) {
+        if (!conversationId) return;
+        if (currentSource) {
+          currentSource.close();
+        }
+
+        const reasoningOffset = options.reasoningOffset || 0;
+        const answerOffset = options.answerOffset || 0;
+        const toolCount = options.toolCount || 0;
+        const source = new EventSource(
+          `/conversations/${conversationId}/stream?reasoning_offset=${reasoningOffset}&answer_offset=${answerOffset}&tool_count=${toolCount}`
+        );
+        currentSource = source;
+
+        source.addEventListener("assistant", (event) => {
+          if (!event.data) return;
+          const payload = JSON.parse(event.data);
+          if (!assistantParts(payload.message_id)) {
+            appendAssistantPlaceholder(payload.message_id);
+          }
+        });
+
+        source.addEventListener("status", (event) => {
+          if (!event.data) return;
+          const payload = JSON.parse(event.data);
+          setStatus(payload.message_id, payload.status);
+        });
+
+        source.addEventListener("reasoning", (event) => {
+          if (!event.data) return;
+          const payload = JSON.parse(event.data);
+          appendReasoningDelta(payload.message_id, payload.delta);
+        });
+
+        source.addEventListener("answer", (event) => {
+          if (!event.data) return;
+          const payload = JSON.parse(event.data);
+          appendAnswerDelta(payload.message_id, payload.delta);
+        });
+
+        source.addEventListener("tool_call_result", (event) => {
+          if (!event.data) return;
+          const payload = JSON.parse(event.data);
+          appendToolMessage(payload.message_id, payload.message);
+        });
+
+        source.addEventListener("error", (event) => {
+          if (!event.data) return;
+          const payload = JSON.parse(event.data);
+          markAssistantFailed(payload.message_id, payload.error);
+          source.close();
+          if (currentSource === source) {
+            currentSource = null;
+          }
+          setComposerBusy(false);
+        });
+
+        source.addEventListener("done", (event) => {
+          if (!event.data) return;
+          const payload = JSON.parse(event.data);
+          source.close();
+          if (currentSource === source) {
+            currentSource = null;
+          }
+          collapseReasoning(payload.message_id);
+          document.querySelector(`[data-message-id="${payload.message_id}"] .waiting`)?.remove();
+          setComposerBusy(false);
+          scrollToBottom();
+        });
+      }
+
       document.querySelectorAll(".answer").forEach(renderAnswer);
       scrollToBottom();
 
@@ -405,9 +585,66 @@
             }
           }
         });
+
+        form.addEventListener("submit", async (event) => {
+          if (!window.fetch || !window.EventSource) return;
+          event.preventDefault();
+
+          const prompt = textarea.value.trim();
+          if (!prompt || textarea.disabled) return;
+
+          clearSubmitError();
+          const formData = new FormData(form);
+          formData.set("prompt", prompt);
+          const submitUrl = form.getAttribute("action");
+          const pendingId = `pending-${Date.now()}`;
+
+          textarea.value = "";
+          setComposerBusy(true);
+          appendUserMessage(prompt);
+          appendAssistantPlaceholder(pendingId);
+
+          try {
+            const response = await fetch(submitUrl, {
+              method: "POST",
+              headers: {
+                "Accept": "application/json",
+                "X-Requested-With": "XMLHttpRequest",
+              },
+              body: formData,
+            });
+            const payload = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+              throw new Error(payload.error || "Send failed");
+            }
+
+            replaceAssistantId(pendingId, payload.assistant_message.id);
+            setStatus(payload.assistant_message.id, payload.assistant_message.status || "queued");
+            form.setAttribute("action", `${payload.conversation_url}/messages`);
+
+            if (window.location.pathname !== payload.conversation_url) {
+              history.pushState({}, "", payload.conversation_url);
+            }
+
+            startConversationStream(payload.conversation_id);
+          } catch (error) {
+            markAssistantFailed(pendingId, error.message);
+            showSubmitError(error.message);
+            textarea.value = prompt;
+            setComposerBusy(false);
+          }
+        });
       }
 
       {% if conversation and is_running %}
+        startConversationStream("{{ conversation.id }}", {
+          reasoningOffset: {{ reasoning_offset }},
+          answerOffset: {{ answer_offset }},
+          toolCount: {{ tool_count }},
+        });
+      {% endif %}
+      {% if 0 %}
         const conversationId = "{{ conversation.id }}";
         const reasoningOffset = {{ reasoning_offset }};
         const answerOffset = {{ answer_offset }};

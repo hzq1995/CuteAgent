@@ -1,7 +1,18 @@
 import copy
 import asyncio
 
+from fastapi.testclient import TestClient
+
 from app import main
+
+
+def login(client):
+    response = client.post("/login", data={"password": main.settings.app_password})
+    assert response.status_code == 200
+
+
+def json_headers():
+    return {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}
 
 
 def test_run_conversation_turn_uses_tool_call_for_dingtalk(monkeypatch, tmp_path):
@@ -214,3 +225,79 @@ def test_run_scheduled_task_marks_pre_conversation_failure(monkeypatch, tmp_path
     assert store.list_conversations() == []
     assert updated_task["last_result"] == "failed before conversation"
     assert updated_task["error"] == "disk unavailable"
+
+
+def test_create_conversation_json_returns_message_ids(monkeypatch, tmp_path):
+    store = main.TaskStore(tmp_path / "conversations")
+    calls = []
+
+    monkeypatch.setattr(main, "store", store)
+    monkeypatch.setattr(main, "run_conversation_turn", lambda conversation_id, message_id: calls.append((conversation_id, message_id)))
+
+    client = TestClient(main.app)
+    login(client)
+
+    response = client.post("/conversations", data={"prompt": "hello"}, headers=json_headers())
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["conversation_url"] == f"/conversations/{payload['conversation_id']}"
+    assert payload["user_message"]["role"] == "user"
+    assert payload["user_message"]["content"] == "hello"
+    assert payload["assistant_message"]["role"] == "assistant"
+    assert payload["assistant_message"]["status"] in {"queued", "running", "succeeded"}
+    assert calls == [(payload["conversation_id"], payload["assistant_message"]["id"])]
+
+
+def test_append_message_json_returns_message_ids(monkeypatch, tmp_path):
+    store = main.TaskStore(tmp_path / "conversations")
+    conversation = store.create_conversation("hello")
+    store.update_message(conversation["id"], conversation["messages"][-1]["id"], status="succeeded")
+    calls = []
+
+    monkeypatch.setattr(main, "store", store)
+    monkeypatch.setattr(main, "run_conversation_turn", lambda conversation_id, message_id: calls.append((conversation_id, message_id)))
+
+    client = TestClient(main.app)
+    login(client)
+
+    response = client.post(
+        f"/conversations/{conversation['id']}/messages",
+        data={"prompt": "next"},
+        headers=json_headers(),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["conversation_id"] == conversation["id"]
+    assert payload["user_message"]["role"] == "user"
+    assert payload["user_message"]["content"] == "next"
+    assert payload["assistant_message"]["role"] == "assistant"
+    assert payload["assistant_message"]["status"] in {"queued", "running", "succeeded"}
+    assert calls == [(conversation["id"], payload["assistant_message"]["id"])]
+
+
+def test_append_message_json_conflicts_when_running_but_form_redirects(monkeypatch, tmp_path):
+    store = main.TaskStore(tmp_path / "conversations")
+    conversation = store.create_conversation("hello")
+
+    monkeypatch.setattr(main, "store", store)
+
+    client = TestClient(main.app)
+    login(client)
+
+    json_response = client.post(
+        f"/conversations/{conversation['id']}/messages",
+        data={"prompt": "next"},
+        headers=json_headers(),
+    )
+    form_response = client.post(
+        f"/conversations/{conversation['id']}/messages",
+        data={"prompt": "next"},
+        follow_redirects=False,
+    )
+
+    assert json_response.status_code == 409
+    assert json_response.json()["error"] == "Conversation already has a running message"
+    assert form_response.status_code == 303
+    assert form_response.headers["location"] == f"/conversations/{conversation['id']}"

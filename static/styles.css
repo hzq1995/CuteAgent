@@ -402,6 +402,11 @@ button {
   word-break: break-word;
 }
 
+.answer.waiting {
+  color: var(--muted);
+  font-style: italic;
+}
+
 .markdown-body p,
 .markdown-body ul,
 .markdown-body blockquote,
@@ -581,6 +586,11 @@ button {
   margin: 0 auto;
   max-width: 820px;
   padding: 12px;
+}
+
+.composer-error {
+  margin: 10px auto 0;
+  max-width: 820px;
 }
 
 .composer textarea {

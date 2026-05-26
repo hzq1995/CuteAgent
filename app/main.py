@@ -4,7 +4,7 @@ from contextlib import suppress
 from datetime import datetime
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -109,11 +109,16 @@ async def create_conversation(
     require_login(request)
     cleaned_prompt = prompt.strip()
     if not cleaned_prompt:
+        if wants_json_response(request):
+            return JSONResponse({"error": "Prompt is required"}, status_code=400)
         return RedirectResponse("/", status_code=303)
 
     conversation = store.create_conversation(cleaned_prompt)
+    user = conversation["messages"][0]
     assistant = conversation["messages"][-1]
     background_tasks.add_task(run_conversation_turn, conversation["id"], assistant["id"])
+    if wants_json_response(request):
+        return JSONResponse(submit_payload(conversation["id"], user, assistant), status_code=201)
     return RedirectResponse(f"/conversations/{conversation['id']}", status_code=303)
 
 
@@ -136,17 +141,25 @@ async def append_message(
     require_login(request)
     cleaned_prompt = prompt.strip()
     if not cleaned_prompt:
+        if wants_json_response(request):
+            return JSONResponse({"error": "Prompt is required"}, status_code=400)
         return RedirectResponse(f"/conversations/{conversation_id}", status_code=303)
 
     conversation = store.get_conversation(conversation_id)
     if not conversation:
+        if wants_json_response(request):
+            return JSONResponse({"error": "Conversation not found"}, status_code=404)
         raise HTTPException(status_code=404, detail="Conversation not found")
     if store.has_running_message(conversation_id):
+        if wants_json_response(request):
+            return JSONResponse({"error": "Conversation already has a running message"}, status_code=409)
         return RedirectResponse(f"/conversations/{conversation_id}", status_code=303)
 
-    store.append_user_message(conversation_id, cleaned_prompt)
+    user = store.append_user_message(conversation_id, cleaned_prompt)
     assistant = store.create_assistant_message(conversation_id)
     background_tasks.add_task(run_conversation_turn, conversation_id, assistant["id"])
+    if wants_json_response(request):
+        return JSONResponse(submit_payload(conversation_id, user, assistant))
     return RedirectResponse(f"/conversations/{conversation_id}", status_code=303)
 
 
@@ -384,6 +397,22 @@ def base_context(request: Request, active_page: str) -> dict:
         "request": request,
         "conversations": store.list_conversations(),
         "active_page": active_page,
+    }
+
+
+def wants_json_response(request: Request) -> bool:
+    return (
+        request.headers.get("x-requested-with", "").lower() == "xmlhttprequest"
+        or "application/json" in request.headers.get("accept", "").lower()
+    )
+
+
+def submit_payload(conversation_id: str, user_message: dict, assistant_message: dict) -> dict:
+    return {
+        "conversation_id": conversation_id,
+        "conversation_url": f"/conversations/{conversation_id}",
+        "user_message": user_message,
+        "assistant_message": assistant_message,
     }
 
 
