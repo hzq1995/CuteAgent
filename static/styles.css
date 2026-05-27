@@ -317,7 +317,7 @@ button {
 }
 
 .message-bubble {
-  background: var(--user);
+  background: #e8f5e9;
   border: 1px solid var(--line);
   border-radius: 18px;
   line-height: 1.65;
@@ -334,10 +334,10 @@ button {
 .assistant-avatar {
   border-radius: 8px;
   flex: 0 0 auto;
-  height: 32px;
+  height: 48px;
   margin-top: 2px;
   overflow: hidden;
-  width: 32px;
+  width: 48px;
 }
 
 .assistant-avatar img {
