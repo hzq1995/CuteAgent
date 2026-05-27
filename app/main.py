@@ -345,12 +345,13 @@ async def update_settings(
     system_prompt: str = Form(""),
     python_timeout_seconds: int = Form(30),
     max_tool_rounds: int = Form(5),
-    enabled_tools: list[str] | None = Form(None),
 ):
     require_login(request)
+    form = await request.form()
+    enabled_tools = form.getlist("enabled_tools")
     values = app_settings_store.update(system_prompt, python_timeout_seconds, max_tool_rounds)
     registry = load_tools()
-    tool_settings_store.update_enabled_tools(list(registry.tools.keys()), enabled_tools or [])
+    tool_settings_store.update_enabled_tools(list(registry.tools.keys()), enabled_tools)
     return templates.TemplateResponse(
         "settings.html",
         base_context(request, active_page="settings")
