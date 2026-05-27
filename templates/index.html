@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CuteHarness</title>
-    <link rel="icon" href="/static/pika.ico" type="image/x-icon">
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="icon" href="/static/pika.ico?v={{ static_v }}" type="image/x-icon">
+    <link rel="stylesheet" href="/static/styles.css?v={{ static_v }}">
   </head>
   <body>
     <div class="app-shell">
@@ -89,7 +89,7 @@
             <div class="empty-state">
               <p class="kicker">CuteHarness</p>
               <h1>今天要处理什么？</h1>
-              <p>输入任务后，系统会流式展示思考和回答。需要发钉钉时，Agent 会主动调用钉钉工具。</p>
+              <p>把一切都交给我吧。</p>
             </div>
           {% endif %}
           <div class="scroll-anchor" id="scroll-anchor" aria-hidden="true"></div>
@@ -114,11 +114,11 @@
       </main>
     </div>
 
-    <script src="/static/markdown.js"></script>
-    <script src="/static/dom-utils.js"></script>
-    <script src="/static/message-parts.js"></script>
-    <script src="/static/stream.js"></script>
-    <script src="/static/composer.js"></script>
+    <script src="/static/markdown.js?v={{ static_v }}"></script>
+    <script src="/static/dom-utils.js?v={{ static_v }}"></script>
+    <script src="/static/message-parts.js?v={{ static_v }}"></script>
+    <script src="/static/stream.js?v={{ static_v }}"></script>
+    <script src="/static/composer.js?v={{ static_v }}"></script>
     <script>
       // 全局 DOM 引用（供各模块访问）
       const form = document.querySelector(".composer");

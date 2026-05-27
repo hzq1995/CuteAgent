@@ -52,7 +52,7 @@ function appendToolMessage(messageId, message) {
       </div>
       <details>
         <summary>查看工具参数和结果</summary>
-        <pre>${escapeHtml(JSON.stringify({ arguments: message.arguments, result: message.result }, null, 2))}</pre>
+        <pre>${escapeHtml(JSON.stringify({ arguments: message.arguments, result: message.result }, null, 2).replace(/\\u([\dA-Fa-f]{4})/g, (_, c) => String.fromCharCode(parseInt(c, 16))))}</pre>
       </details>
     </div>
   `;

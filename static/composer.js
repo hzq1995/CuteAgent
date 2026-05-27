@@ -25,8 +25,16 @@ function showSubmitError(message) {
   form.insertAdjacentElement("afterend", error);
 }
 
+function autoResizeTextarea() {
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  textarea.style.height = Math.min(textarea.scrollHeight, 160) + "px";
+}
+
 function initComposer() {
   if (!textarea || !form) return;
+
+  textarea.addEventListener("input", autoResizeTextarea);
 
   textarea.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -51,6 +59,7 @@ function initComposer() {
     const pendingId = `pending-${Date.now()}`;
 
     textarea.value = "";
+    autoResizeTextarea();
     setComposerBusy(true);
     appendUserMessage(prompt);
     appendAssistantPlaceholder(pendingId);

@@ -59,6 +59,7 @@ function startConversationStream(conversationId, options = {}) {
       currentSource = null;
     }
     setComposerBusy(false);
+    if (typeof textarea !== "undefined" && textarea) textarea.focus();
   });
 
   source.addEventListener("done", (event) => {
@@ -72,5 +73,6 @@ function startConversationStream(conversationId, options = {}) {
     document.querySelector(`[data-message-id="${payload.message_id}"] .waiting`)?.remove();
     setComposerBusy(false);
     scrollToBottom();
+    if (typeof textarea !== "undefined" && textarea) textarea.focus();
   });
 }

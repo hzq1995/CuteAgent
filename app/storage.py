@@ -30,7 +30,7 @@ class TaskStore:
     def create_conversation(self, prompt: str) -> dict[str, Any]:
         now = utc_now()
         conversation = {
-            "id": uuid4().hex,
+            "id": uuid4().hex[:16],
             "title": title_from_prompt(prompt),
             "created_at": now,
             "updated_at": now,

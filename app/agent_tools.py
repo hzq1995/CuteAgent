@@ -7,6 +7,7 @@ from typing import Any
 
 from app.memory_store import MemoryStore
 from app.scheduler_store import ScheduledTaskStore
+from app.storage import TaskStore
 from utils.dingding_robot import DingdingRobot
 
 
@@ -132,6 +133,34 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_conversations",
+            "description": "List recent CuteHarness conversation history. Returns id, title, and updated_at for each conversation, sorted by last updated time descending.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Maximum number of conversations to return. Default is 10."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_conversation",
+            "description": "Get the full message content of a specific conversation by its id. Returns the title and all user/assistant messages (tool messages excluded).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "conversation_id": {"type": "string", "description": "The conversation id to retrieve."},
+                },
+                "required": ["conversation_id"],
+            },
+        },
+    },
 ]
 
 
@@ -141,6 +170,7 @@ class AgentToolRunner:
         base_dir: Path,
         scheduled_tasks: ScheduledTaskStore,
         memories: MemoryStore,
+        task_store: TaskStore,
         python_timeout_seconds: int,
         dingtalk_webhook_url: str = "",
         dingtalk_access_token: str = "",
@@ -148,6 +178,7 @@ class AgentToolRunner:
         self.base_dir = base_dir
         self.scheduled_tasks = scheduled_tasks
         self.memories = memories
+        self.task_store = task_store
         self.python_timeout_seconds = python_timeout_seconds
         self.dingtalk_webhook_url = dingtalk_webhook_url
         self.dingtalk_access_token = dingtalk_access_token
@@ -160,6 +191,8 @@ class AgentToolRunner:
             "update_memory": self.update_memory,
             "delete_memory": self.delete_memory,
             "send_dingtalk_message": self.send_dingtalk_message,
+            "list_conversations": self.list_conversations,
+            "get_conversation": self.get_conversation,
         }
 
     def run(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -225,6 +258,24 @@ class AgentToolRunner:
             access_token=self.dingtalk_access_token,
         )
         return robot.send_markdown(ensure_business_prefix(title), ensure_business_prefix(text))
+
+    def list_conversations(self, limit: int = 10) -> list[dict[str, Any]]:
+        all_conversations = self.task_store.list_conversations()
+        return [
+            {"id": c["id"], "title": c["title"], "updated_at": c["updated_at"]}
+            for c in all_conversations[:limit]
+        ]
+
+    def get_conversation(self, conversation_id: str) -> dict[str, Any] | None:
+        conversation = self.task_store.get_conversation(conversation_id)
+        if conversation is None:
+            return None
+        messages = [
+            {"role": m["role"], "content": m["content"]}
+            for m in conversation.get("messages", [])
+            if m["role"] in ("user", "assistant")
+        ]
+        return {"id": conversation["id"], "title": conversation["title"], "messages": messages}
 
 
 def parse_tool_arguments(raw: str) -> dict[str, Any]:

@@ -1,7 +1,9 @@
 import asyncio
 import json
+import time
 from contextlib import suppress
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -30,6 +32,20 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
+
+
+def _tojson_unicode(value, indent=None):
+    """tojson filter that keeps non-ASCII chars (e.g. Chinese) readable."""
+    from markupsafe import Markup
+    result = json.dumps(value, ensure_ascii=False, indent=indent)
+    # Escape HTML special chars to stay safe in HTML context
+    result = result.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return Markup(result)
+
+
+templates.env.filters["tojson"] = _tojson_unicode
+templates.env.globals["static_v"] = str(int(time.time()))
+
 store = TaskStore(BASE_DIR / "data" / "conversations")
 scheduled_task_store = ScheduledTaskStore(BASE_DIR / "data" / "scheduled_tasks.json")
 app_settings_store = AppSettingsStore(BASE_DIR / "data" / "settings.json")
@@ -431,6 +447,7 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
             base_dir=BASE_DIR,
             scheduled_tasks=scheduled_task_store,
             memories=memory_store,
+            task_store=store,
             python_timeout_seconds=app_config["python_timeout_seconds"],
             dingtalk_webhook_url=settings.dingtalk_webhook_url,
             dingtalk_access_token=settings.dingtalk_access_token,
@@ -534,9 +551,10 @@ def format_memory_block(memories: list[dict]) -> str:
         if not content:
             continue
         lines.append(f"{format_memory_time(memory.get('updated_at', ''))} {memory.get('id', '')} {content}".strip())
+    now_str = datetime.now(tz=ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M")
     if not lines:
-        return ""
-    return "记忆：\n" + "\n".join(lines)
+        return f"现在的时间是：{now_str}"
+    return f"现在的时间是：{now_str}，你拥有的记忆：\n" + "\n".join(lines)
 
 
 def format_memory_time(value: str) -> str:
