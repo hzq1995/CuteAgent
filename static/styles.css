@@ -332,18 +332,19 @@ button {
 }
 
 .assistant-avatar {
-  align-items: center;
-  background: var(--ink);
   border-radius: 8px;
-  color: #fffaf1;
-  display: flex;
   flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 700;
   height: 32px;
-  justify-content: center;
   margin-top: 2px;
+  overflow: hidden;
   width: 32px;
+}
+
+.assistant-avatar img {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
 }
 
 .assistant-body {

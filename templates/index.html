@@ -27,7 +27,7 @@
                   </article>
                 {% elif message.role == "assistant" %}
                   <article class="message assistant-message" data-message-id="{{ message.id }}">
-                    <div class="assistant-avatar">AI</div>
+                    <div class="assistant-avatar"><img src="/static/avatar/{{ range(1, 5) | random }}.png?v={{ static_v }}" alt="AI"></div>
                     <div class="assistant-body">
                       <div class="assistant-status-row">
                         <span class="message-status {{ message.status }}">{{ message.status }}</span>

@@ -121,8 +121,9 @@ function appendAssistantPlaceholder(messageId) {
   const article = document.createElement("article");
   article.className = "message assistant-message assistant-placeholder";
   article.dataset.messageId = messageId;
+  const avatarIndex = Math.floor(Math.random() * 4) + 1;
   article.innerHTML = `
-    <div class="assistant-avatar">AI</div>
+    <div class="assistant-avatar"><img src="/static/avatar/${avatarIndex}.png" alt="AI"></div>
     <div class="assistant-body">
       <div class="assistant-status-row">
         <span class="message-status queued">queued</span>
