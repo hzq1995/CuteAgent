@@ -11,13 +11,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.agent_tools import TOOL_DEFINITIONS, AgentToolRunner, parse_tool_arguments
+from app.agent_tools import AgentToolRunner, load_tools, parse_tool_arguments
 from app.app_settings import AppSettingsStore
 from app.config import BASE_DIR, get_settings
 from app.deepseek_client import DeepSeekClient
 from app.memory_store import MemoryStore
 from app.scheduler_store import ScheduledTaskStore
 from app.storage import TaskStore
+from app.tool_settings import ToolSettingsStore
 
 
 settings = get_settings()
@@ -49,6 +50,7 @@ templates.env.globals["static_v"] = str(int(time.time()))
 store = TaskStore(BASE_DIR / "data" / "conversations")
 scheduled_task_store = ScheduledTaskStore(BASE_DIR / "data" / "scheduled_tasks.json")
 app_settings_store = AppSettingsStore(BASE_DIR / "data" / "settings.json")
+tool_settings_store = ToolSettingsStore(BASE_DIR / "data" / "tool_settings.json")
 memory_store = MemoryStore(BASE_DIR / "data" / "memories.json")
 
 
@@ -333,7 +335,7 @@ async def settings_page(request: Request):
     return templates.TemplateResponse(
         "settings.html",
         base_context(request, active_page="settings")
-        | {"app_settings": app_settings_store.get(), "memories": memory_store.list_memories(), "saved": False},
+        | settings_context(saved=False),
     )
 
 
@@ -343,13 +345,16 @@ async def update_settings(
     system_prompt: str = Form(""),
     python_timeout_seconds: int = Form(30),
     max_tool_rounds: int = Form(5),
+    enabled_tools: list[str] | None = Form(None),
 ):
     require_login(request)
     values = app_settings_store.update(system_prompt, python_timeout_seconds, max_tool_rounds)
+    registry = load_tools()
+    tool_settings_store.update_enabled_tools(list(registry.tools.keys()), enabled_tools or [])
     return templates.TemplateResponse(
         "settings.html",
         base_context(request, active_page="settings")
-        | {"app_settings": values, "memories": memory_store.list_memories(), "saved": True},
+        | settings_context(app_settings=values, registry=registry, saved=True),
     )
 
 
@@ -416,6 +421,37 @@ def base_context(request: Request, active_page: str) -> dict:
     }
 
 
+def settings_context(
+    *,
+    app_settings: dict | None = None,
+    registry=None,
+    saved: bool,
+) -> dict:
+    registry = registry or load_tools()
+    disabled_tools = tool_settings_store.disabled_tools()
+    tools = []
+    for name, tool in registry.tools.items():
+        try:
+            path = str(tool.path.relative_to(BASE_DIR))
+        except ValueError:
+            path = str(tool.path)
+        tools.append(
+            {
+                "name": name,
+                "description": tool.definition.get("function", {}).get("description", ""),
+                "path": path,
+                "enabled": name not in disabled_tools,
+            }
+        )
+    return {
+        "app_settings": app_settings or app_settings_store.get(),
+        "tool_settings": {"disabled_tools": sorted(disabled_tools)},
+        "tools": tools,
+        "memories": memory_store.list_memories(),
+        "saved": saved,
+    }
+
+
 def wants_json_response(request: Request) -> bool:
     return (
         request.headers.get("x-requested-with", "").lower() == "xmlhttprequest"
@@ -451,6 +487,7 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
             python_timeout_seconds=app_config["python_timeout_seconds"],
             dingtalk_webhook_url=settings.dingtalk_webhook_url,
             dingtalk_access_token=settings.dingtalk_access_token,
+            disabled_tools=tool_settings_store.disabled_tools(),
         )
         messages = build_model_context(conversation_id, assistant_message_id, app_config["system_prompt"])
         max_tool_rounds = app_config["max_tool_rounds"]
@@ -460,7 +497,7 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
             requested_tools = False
             assistant_protocol_reasoning = ""
             assistant_protocol_content = ""
-            for event in client.stream_agent_turn(messages, TOOL_DEFINITIONS):
+            for event in client.stream_agent_turn(messages, tool_runner.definitions):
                 if event["type"] == "reasoning":
                     assistant_protocol_reasoning += event["delta"]
                     store.append_reasoning(conversation_id, assistant_message_id, event["delta"])

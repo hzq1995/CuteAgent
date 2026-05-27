@@ -34,6 +34,38 @@
                 <input name="max_tool_rounds" type="number" min="1" max="20" value="{{ app_settings.max_tool_rounds }}">
               </label>
             </div>
+            <section class="tool-settings">
+              <div class="settings-section-head">
+                <div>
+                  <p class="kicker">Tools</p>
+                  <h2>工具开关</h2>
+                </div>
+                <code>data/tool_settings.json</code>
+              </div>
+              {% if tools %}
+                <div class="tool-toggle-list">
+                  {% for tool in tools %}
+                    <label class="tool-toggle-row">
+                      <input name="enabled_tools" type="checkbox" value="{{ tool.name }}" {% if tool.enabled %}checked{% endif %}>
+                      <span class="tool-toggle-body">
+                        <span class="tool-toggle-title">
+                          <code>{{ tool.name }}</code>
+                          {% if tool.enabled %}
+                            <span class="pill succeeded">启用</span>
+                          {% else %}
+                            <span class="pill failed">关闭</span>
+                          {% endif %}
+                        </span>
+                        <span class="tool-toggle-description">{{ tool.description or "无描述" }}</span>
+                        <span class="tool-toggle-path">{{ tool.path }}</span>
+                      </span>
+                    </label>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <p class="muted">当前没有加载到工具。</p>
+              {% endif %}
+            </section>
             <div class="form-actions">
               <button type="submit">保存设置</button>
             </div>

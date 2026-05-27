@@ -660,6 +660,95 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.tool-settings {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 14px;
+  padding-top: 16px;
+}
+
+.settings-section-head {
+  align-items: start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.settings-section-head h2 {
+  font-size: 18px;
+  margin: 2px 0 0;
+}
+
+.settings-section-head code {
+  background: var(--thinking);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: #4c4740;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  padding: 4px 7px;
+}
+
+.tool-toggle-list {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.tool-toggle-row {
+  align-items: start;
+  background: #fffaf1;
+  display: grid !important;
+  gap: 12px !important;
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: 12px;
+}
+
+.tool-toggle-row + .tool-toggle-row {
+  border-top: 1px solid var(--line);
+}
+
+.tool-toggle-row input {
+  margin-top: 4px;
+  width: auto;
+}
+
+.tool-toggle-body {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.tool-toggle-title {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tool-toggle-title code,
+.tool-toggle-path {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.tool-toggle-title code {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.tool-toggle-description {
+  color: var(--ink) !important;
+  font-size: 13px !important;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.tool-toggle-path {
+  color: var(--muted) !important;
+  font-size: 12px !important;
+  overflow-wrap: anywhere;
+}
+
 .check-line {
   align-content: end;
   align-items: center;
