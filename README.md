@@ -30,7 +30,29 @@ Application scheduled tasks are stored in `data/scheduled_tasks.json`, UI-editab
 
 ## Agent Tools
 
+Agent tools are hot-loaded from Python modules under `tools/`. CuteHarness scans the directory once at the start of each agent turn, then uses that same tool registry for all tool calls in that turn. Changes to tool files take effect on the next user message or scheduled task run.
+
+Tool switches are stored in `data/tool_settings.json`:
+
+```json
+{
+  "disabled_tools": ["run_bash"]
+}
+```
+
+Disabled tools are not sent to the model and cannot be executed by the local tool runner. New tools are enabled by default unless their names are listed in `disabled_tools`. The settings page can edit this file, and it is intentionally simple enough to change by hand or by an Agent when the user explicitly asks it to modify local files.
+
+Each `tools/*.py` module must export:
+
+- `TOOL_DEFINITION`: a function tool schema with a unique `function.name`.
+- `run(context, **kwargs)`: the implementation called with parsed tool arguments.
+
+See `skills/工具创建.md` for the tool creation workflow.
+
+Built-in tools:
+
 - `run_python`: runs local Python code with a timeout.
+- `run_bash`: runs `bash -lc <command>` in the workspace with a timeout.
 - `list_scheduled_tasks`: lists CuteHarness application scheduled tasks.
 - `create_scheduled_task`: creates an application scheduled task.
 - `delete_scheduled_task`: deletes an application scheduled task.
@@ -38,5 +60,8 @@ Application scheduled tasks are stored in `data/scheduled_tasks.json`, UI-editab
 - `update_memory`: updates an existing memory by id.
 - `delete_memory`: deletes an existing memory by id.
 - `send_dingtalk_message`: sends a DingTalk markdown message and automatically prefixes title and body with `[业务通知]`.
+
+- `list_conversations`: lists recent conversation history.
+- `get_conversation`: reads a conversation by id.
 
 DingTalk is no longer pushed automatically after every reply. The Agent sends DingTalk messages only when it calls `send_dingtalk_message`.
