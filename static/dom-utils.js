@@ -10,26 +10,62 @@ function renderAnswer(target) {
   target.innerHTML = renderMarkdown(target.dataset.raw);
 }
 
-function scrollToBottom() {
+const CHAT_BOTTOM_THRESHOLD = 80;
+let chatAutoFollow = true;
+let chatScrollTrackingReady = false;
+let pendingChatScrollFrame = 0;
+
+function chatScroller() {
+  return document.getElementById("chat-scroll");
+}
+
+function isChatNearBottom(scroller = chatScroller()) {
+  if (!scroller) return true;
+  return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= CHAT_BOTTOM_THRESHOLD;
+}
+
+function initChatScrollTracking() {
+  if (chatScrollTrackingReady) return;
   const scroller = document.getElementById("chat-scroll");
-  const anchor = document.getElementById("scroll-anchor");
   if (!scroller) return;
+  chatScrollTrackingReady = true;
+
+  scroller.addEventListener("scroll", () => {
+    chatAutoFollow = isChatNearBottom(scroller);
+  });
+
+  document.addEventListener(
+    "toggle",
+    (event) => {
+      if (!scroller.contains(event.target)) return;
+      chatAutoFollow = isChatNearBottom(scroller);
+    },
+    true
+  );
+}
+
+function scrollToBottom(options = {}) {
+  const scroller = chatScroller();
+  if (!scroller) return;
+  initChatScrollTracking();
+  if (!options.force && !chatAutoFollow && !isChatNearBottom(scroller)) return;
 
   const applyScroll = () => {
-    scroller.scrollTop = scroller.scrollHeight;
-    if (anchor) {
-      anchor.scrollIntoView({ block: "end" });
-    }
-    if (document.scrollingElement) {
-      document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight;
-    }
+    pendingChatScrollFrame = 0;
+    scroller.scrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    chatAutoFollow = true;
   };
 
-  applyScroll();
-  requestAnimationFrame(() => {
+  if (options.force && pendingChatScrollFrame) {
+    cancelAnimationFrame(pendingChatScrollFrame);
+    pendingChatScrollFrame = 0;
+  }
+  if (options.force) {
     applyScroll();
-    requestAnimationFrame(applyScroll);
-  });
+  }
+  if (!pendingChatScrollFrame) {
+    pendingChatScrollFrame = requestAnimationFrame(applyScroll);
+  }
 }
 
 function setStatus(messageId, value) {
@@ -111,7 +147,7 @@ function appendUserMessage(content) {
   article.className = "message user-message";
   article.innerHTML = `<div class="message-bubble">${escapeHtml(content)}</div>`;
   list.appendChild(article);
-  scrollToBottom();
+  scrollToBottom({ force: true });
   return article;
 }
 
@@ -134,6 +170,6 @@ function appendAssistantPlaceholder(messageId) {
     </div>
   `;
   list.appendChild(article);
-  scrollToBottom();
+  scrollToBottom({ force: true });
   return article;
 }

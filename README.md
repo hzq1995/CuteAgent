@@ -65,3 +65,7 @@ Built-in tools:
 - `get_conversation`: reads a conversation by id.
 
 DingTalk is no longer pushed automatically after every reply. The Agent sends DingTalk messages only when it calls `send_dingtalk_message`.
+
+## Skills
+
+See  for the joke-telling workflow.

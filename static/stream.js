@@ -72,7 +72,6 @@ function startConversationStream(conversationId, options = {}) {
     collapseReasoning(payload.message_id);
     document.querySelector(`[data-message-id="${payload.message_id}"] .waiting`)?.remove();
     setComposerBusy(false);
-    scrollToBottom();
     if (typeof textarea !== "undefined" && textarea) textarea.focus();
   });
 }
