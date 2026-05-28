@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>🌸 CuteHarness 技能</title>
+    <link rel="icon" href="/static/pika.ico?v={{ static_v }}" type="image/x-icon">
+    <link rel="stylesheet" href="/static/styles.css?v={{ static_v }}">
+  </head>
+  <body>
+    <div class="app-shell">
+      {% include "_sidebar.html" %}
+      <main class="page-pane">
+        <section class="page-content">
+          <div class="page-header">
+            <p class="kicker">Skills</p>
+            <h1>技能</h1>
+          </div>
+
+          {% if saved %}
+            <p class="success-note">技能已保存。</p>
+          {% endif %}
+          {% if error %}
+            <p class="error">{{ error }}</p>
+          {% endif %}
+
+          <section class="skills-layout">
+            <aside class="skill-list-panel" aria-label="技能列表">
+              <div class="settings-section-head">
+                <div>
+                  <p class="kicker">Library</p>
+                  <h2>skills/</h2>
+                </div>
+                <code>{{ skills|length }} md</code>
+              </div>
+              {% if skills %}
+                <nav class="skill-list">
+                  {% for skill in skills %}
+                    <a class="skill-list-item {% if selected_skill and skill.name == selected_skill.name %}active{% endif %}" href="{{ skill.url }}">
+                      <span class="skill-name">{{ skill.name }}</span>
+                      <span class="skill-meta">{{ skill.size_bytes }} bytes / {{ skill.updated_at }}</span>
+                    </a>
+                  {% endfor %}
+                </nav>
+              {% else %}
+                <p class="muted">skills/ 下暂无 Markdown 技能文件。</p>
+              {% endif %}
+            </aside>
+
+            {% if selected_skill %}
+              <form class="panel-form skill-editor" method="post" action="{{ selected_skill.url }}">
+                <div class="skill-editor-head">
+                  <div>
+                    <p class="kicker">Editing</p>
+                    <h2>{{ selected_skill.name }}</h2>
+                  </div>
+                  <code>{{ selected_skill.path }}</code>
+                </div>
+                <label>
+                  <span>技能名称</span>
+                  <input name="skill_name" value="{{ selected_skill.name }}" required>
+                </label>
+                <label>
+                  <span>Markdown 内容</span>
+                  <textarea name="content" rows="24" required>{{ selected_skill.content }}</textarea>
+                </label>
+                <div class="form-actions">
+                  <button type="submit">保存技能</button>
+                </div>
+              </form>
+            {% else %}
+              <div class="panel-form skill-empty">
+                <p class="muted">选择一个技能后可查看和编辑内容。</p>
+              </div>
+            {% endif %}
+          </section>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

@@ -17,9 +17,10 @@
   </button>
 
   <nav class="primary-nav" aria-label="&#20027;&#23548;&#33322;">
-    <a class="nav-link {% if active_page == 'chat' and not conversation %}active{% endif %}" href="/">&#26032;&#24314;&#23545;&#35805;</a>
-    <a class="nav-link {% if active_page == 'scheduled_tasks' %}active{% endif %}" href="/scheduled-tasks">&#23450;&#26102;&#20219;&#21153;</a>
-    <a class="nav-link {% if active_page == 'settings' %}active{% endif %}" href="/settings">&#35774;&#32622;</a>
+    <a class="nav-link nav-chat {% if active_page == 'chat' and not conversation %}active{% endif %}" href="/">新聊天</a>
+    <a class="nav-link nav-tasks {% if active_page == 'scheduled_tasks' %}active{% endif %}" href="/scheduled-tasks">定时</a>
+    <a class="nav-link nav-skills {% if active_page == 'skills' %}active{% endif %}" href="/skills">&#25216;&#33021;</a>
+    <a class="nav-link nav-settings {% if active_page == 'settings' %}active{% endif %}" href="/settings">&#35774;&#32622;</a>
   </nav>
 
   <div class="sidebar-scrim" data-history-close aria-hidden="true"></div>
