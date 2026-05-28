@@ -585,6 +585,54 @@ button {
   white-space: pre-wrap;
 }
 
+.transferred-file {
+  margin-top: 12px;
+}
+
+.transferred-image-link {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: block;
+  max-width: 520px;
+  overflow: hidden;
+}
+
+.transferred-image-link img {
+  display: block;
+  height: auto;
+  max-height: 420px;
+  object-fit: contain;
+  width: 100%;
+}
+
+.transferred-download {
+  align-items: start;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  display: grid;
+  gap: 4px;
+  max-width: 520px;
+  padding: 12px;
+  text-decoration: none;
+}
+
+.transferred-download:hover {
+  border-color: var(--accent);
+}
+
+.transferred-file-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.transferred-file-meta {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .composer-wrap {
   background: linear-gradient(180deg, rgba(247, 245, 240, 0), var(--bg) 24%);
   padding: 18px clamp(18px, 6vw, 72px) 24px;

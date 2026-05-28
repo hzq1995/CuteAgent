@@ -82,12 +82,14 @@ function appendToolMessage(messageId, message) {
   const article = document.createElement("article");
   article.className = "message tool-message inline-tool-message";
   article.dataset.partType = "tool";
+  const transfer = transferredFileFromToolResult(message.result);
   article.innerHTML = `
     <div class="tool-card">
       <div class="tool-card-header">
         <span>${escapeHtml(message.name || "tool")}</span>
         <span class="message-status ${escapeHtml(message.status || "")}">${escapeHtml(message.status || "")}</span>
       </div>
+      ${transfer ? transferredFileHtml(transfer.file) : ""}
       <details>
         <summary>查看工具参数和结果</summary>
         <pre>${escapeHtml(JSON.stringify({ arguments: message.arguments, result: message.result }, null, 2).replace(/\\u([\dA-Fa-f]{4})/g, (_, c) => String.fromCharCode(parseInt(c, 16))))}</pre>
@@ -96,4 +98,41 @@ function appendToolMessage(messageId, message) {
   `;
   parts.appendChild(article);
   scrollToBottom();
+}
+
+function transferredFileFromToolResult(result) {
+  if (!result || result.ok !== true || !result.result) return null;
+  return result.result.type === "transferred_file" ? result.result : null;
+}
+
+function transferredFileHtml(file) {
+  if (!file) return "";
+  const name = escapeHtml(file.name || "file");
+  const url = escapeHtml(file.url || "#");
+  const mime = escapeHtml(file.mime_type || "application/octet-stream");
+  const size = escapeHtml(formatFileSize(file.size_bytes || 0));
+  if (file.is_image) {
+    return `
+      <div class="transferred-file">
+        <a class="transferred-image-link" href="${url}" target="_blank" rel="noopener">
+          <img src="${url}" alt="${name}">
+        </a>
+      </div>
+    `;
+  }
+  return `
+    <div class="transferred-file">
+      <a class="transferred-download" href="${url}" download>
+        <span class="transferred-file-name">${name}</span>
+        <span class="transferred-file-meta">${mime} · ${size}</span>
+      </a>
+    </div>
+  `;
+}
+
+function formatFileSize(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) return `${value} bytes`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
