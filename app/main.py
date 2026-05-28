@@ -1,8 +1,11 @@
 import asyncio
 import json
+import re
 import time
 from contextlib import suppress
 from datetime import datetime
+from pathlib import Path
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
@@ -52,6 +55,7 @@ scheduled_task_store = ScheduledTaskStore(BASE_DIR / "data" / "scheduled_tasks.j
 app_settings_store = AppSettingsStore(BASE_DIR / "data" / "settings.json")
 tool_settings_store = ToolSettingsStore(BASE_DIR / "data" / "tool_settings.json")
 memory_store = MemoryStore(BASE_DIR / "data" / "memories.json")
+SKILLS_DIR = BASE_DIR / "skills"
 
 
 def require_login(request: Request) -> None:
@@ -349,6 +353,78 @@ async def delete_scheduled_task(task_id: str, request: Request):
     return RedirectResponse("/scheduled-tasks", status_code=303)
 
 
+@app.get("/skills", response_class=HTMLResponse)
+async def skills_page(request: Request):
+    redirect = redirect_if_unauthenticated(request)
+    if redirect:
+        return redirect
+    skills = list_skill_files()
+    selected_name = skills[0]["name"] if skills else ""
+    selected = read_skill(selected_name) if selected_name else None
+    return templates.TemplateResponse(
+        "skills.html",
+        base_context(request, active_page="skills")
+        | skills_context(skills=skills, selected=selected, saved=False),
+    )
+
+
+@app.get("/skills/{filename}", response_class=HTMLResponse)
+async def skill_detail_page(filename: str, request: Request):
+    redirect = redirect_if_unauthenticated(request)
+    if redirect:
+        return redirect
+    skills = list_skill_files()
+    selected = read_skill(filename)
+    return templates.TemplateResponse(
+        "skills.html",
+        base_context(request, active_page="skills")
+        | skills_context(skills=skills, selected=selected, saved=False),
+    )
+
+
+@app.post("/skills/{filename}", response_class=HTMLResponse)
+async def update_skill(
+    filename: str,
+    request: Request,
+    content: str = Form(""),
+    skill_name: str = Form(""),
+):
+    require_login(request)
+    path = resolve_skill_path(filename)
+    try:
+        target_name = normalize_skill_filename(skill_name or filename)
+        target_path = resolve_skill_target_path(target_name)
+    except ValueError as exc:
+        skills = list_skill_files()
+        selected = read_skill(filename)
+        return templates.TemplateResponse(
+            "skills.html",
+            base_context(request, active_page="skills")
+            | skills_context(skills=skills, selected=selected, saved=False, error=str(exc)),
+            status_code=400,
+        )
+    if target_path != path and target_path.exists():
+        skills = list_skill_files()
+        selected = read_skill(filename)
+        return templates.TemplateResponse(
+            "skills.html",
+            base_context(request, active_page="skills")
+            | skills_context(skills=skills, selected=selected, saved=False, error="Skill name already exists."),
+            status_code=400,
+        )
+    if target_path != path:
+        path.rename(target_path)
+        path = target_path
+    path.write_text(normalize_skill_content(content), encoding="utf-8", newline="\n")
+    skills = list_skill_files()
+    selected = read_skill(path.name)
+    return templates.TemplateResponse(
+        "skills.html",
+        base_context(request, active_page="skills")
+        | skills_context(skills=skills, selected=selected, saved=True),
+    )
+
+
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
     redirect = redirect_if_unauthenticated(request)
@@ -473,6 +549,93 @@ def settings_context(
         "memories": memory_store.list_memories(),
         "saved": saved,
     }
+
+
+def skills_context(
+    *,
+    skills: list[dict],
+    selected: dict | None,
+    saved: bool,
+    error: str = "",
+) -> dict:
+    return {
+        "skills": skills,
+        "selected_skill": selected,
+        "saved": saved,
+        "error": error,
+    }
+
+
+def list_skill_files() -> list[dict]:
+    if not SKILLS_DIR.exists():
+        return []
+    files = []
+    for path in SKILLS_DIR.iterdir():
+        if not path.is_file() or path.suffix.lower() != ".md":
+            continue
+        stat = path.stat()
+        files.append(
+            {
+                "name": path.name,
+                "url": f"/skills/{quote(path.name)}",
+                "size_bytes": stat.st_size,
+                "updated_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+            }
+        )
+    return sorted(files, key=lambda item: item["name"].lower())
+
+
+def read_skill(filename: str) -> dict:
+    path = resolve_skill_path(filename)
+    stat = path.stat()
+    return {
+        "name": path.name,
+        "path": str(path.relative_to(BASE_DIR)) if BASE_DIR in path.resolve().parents else str(path),
+        "url": f"/skills/{quote(path.name)}",
+        "content": normalize_skill_content(path.read_text(encoding="utf-8")),
+        "size_bytes": stat.st_size,
+        "updated_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+    }
+
+
+def resolve_skill_path(filename: str):
+    try:
+        resolved = resolve_skill_target_path(filename)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return resolved
+
+
+def resolve_skill_target_path(filename: str):
+    normalized = normalize_skill_filename(filename)
+    root = SKILLS_DIR.resolve()
+    resolved = (SKILLS_DIR / normalized).resolve()
+    if resolved.parent != root:
+        raise ValueError("skill path must stay inside skills directory")
+    return resolved
+
+
+def normalize_skill_filename(filename: str) -> str:
+    value = (filename or "").strip()
+    if not value or "/" in value or "\\" in value:
+        raise ValueError("skill name is required")
+    if any(char in value for char in '<>:"|?*') or any(ord(char) < 32 for char in value):
+        raise ValueError("skill name contains invalid characters")
+    candidate = Path(value)
+    if candidate.name != value:
+        raise ValueError("skill name must not include a path")
+    if not candidate.suffix:
+        value = f"{value}.md"
+        candidate = Path(value)
+    if candidate.suffix.lower() != ".md":
+        raise ValueError("skill name must end with .md")
+    return value
+
+
+def normalize_skill_content(content: str) -> str:
+    return re.sub(r"\r+\n", "\n", content or "").replace("\r", "\n")
 
 
 def wants_json_response(request: Request) -> bool:
