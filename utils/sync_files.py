@@ -11,6 +11,7 @@ from pathlib import Path
 BUFFER_SIZE = 4096
 DEFAULT_PORT = 7070
 DEFAULT_EXTENSIONS = ['.py', '.html', '.css', '.js', '.md']  # 默认同步的文件类型
+DEFAULT_EXCLUDE_DIRS = {'data', 'tests', 'skills', '.git', '__pycache__', 'venv', '.vscode', 'output', 'daily_plots', 'datasets', '.pytest_cache'}
 HANDSHAKE_MSG = b"SYNC_START_V1"
 HANDSHAKE_ACK = b"SYNC_ACK_V1"
 
@@ -41,8 +42,8 @@ def run_local(host, port, extensions):
     for ext in extensions:
         files_to_send.extend(list(root_dir.rglob(f"*{ext}")))
     
-    # 排除一些不需要同步的目录，如 .git, __pycache__, venv
-    exclude_dirs = {'.git', '__pycache__', 'venv', '.vscode', 'output', 'daily_plots', 'datasets'}
+    # 使用默认的排除目录配置
+    exclude_dirs = DEFAULT_EXCLUDE_DIRS
     
     # 过滤文件
     filtered_files = []

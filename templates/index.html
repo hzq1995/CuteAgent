@@ -49,6 +49,21 @@
                                     <span>{{ part.name }}</span>
                                     <span class="message-status {{ part.status }}">{{ part.status }}</span>
                                   </div>
+                                  {% set transfer = part.result.result if part.result and part.result.ok and part.result.result and part.result.result.type == "transferred_file" else none %}
+                                  {% if transfer %}
+                                    <div class="transferred-file">
+                                      {% if transfer.file.is_image %}
+                                        <a class="transferred-image-link" href="{{ transfer.file.url }}" target="_blank" rel="noopener">
+                                          <img src="{{ transfer.file.url }}" alt="{{ transfer.file.name }}">
+                                        </a>
+                                      {% else %}
+                                        <a class="transferred-download" href="{{ transfer.file.url }}" download>
+                                          <span class="transferred-file-name">{{ transfer.file.name }}</span>
+                                          <span class="transferred-file-meta">{{ transfer.file.mime_type }} · {{ transfer.file.size_bytes }} bytes</span>
+                                        </a>
+                                      {% endif %}
+                                    </div>
+                                  {% endif %}
                                   <details>
                                     <summary>Tool arguments and result</summary>
                                     <pre>{{ {"arguments": part.arguments, "result": part.result} | tojson(indent=2) }}</pre>
@@ -76,6 +91,21 @@
                         <span>{{ message.name }}</span>
                         <span class="message-status {{ message.status }}">{{ message.status }}</span>
                       </div>
+                      {% set transfer = message.result.result if message.result and message.result.ok and message.result.result and message.result.result.type == "transferred_file" else none %}
+                      {% if transfer %}
+                        <div class="transferred-file">
+                          {% if transfer.file.is_image %}
+                            <a class="transferred-image-link" href="{{ transfer.file.url }}" target="_blank" rel="noopener">
+                              <img src="{{ transfer.file.url }}" alt="{{ transfer.file.name }}">
+                            </a>
+                          {% else %}
+                            <a class="transferred-download" href="{{ transfer.file.url }}" download>
+                              <span class="transferred-file-name">{{ transfer.file.name }}</span>
+                              <span class="transferred-file-meta">{{ transfer.file.mime_type }} · {{ transfer.file.size_bytes }} bytes</span>
+                            </a>
+                          {% endif %}
+                        </div>
+                      {% endif %}
                       <details>
                         <summary>查看工具参数和结果</summary>
                         <pre>{{ {"arguments": message.arguments, "result": message.result} | tojson(indent=2) }}</pre>

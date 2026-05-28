@@ -6,7 +6,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -264,6 +264,28 @@ async def conversation_stream(
             await asyncio.sleep(0.35)
 
     return StreamingResponse(events(), media_type="text/event-stream")
+
+
+@app.get("/files/{file_id}/{filename}")
+async def shared_file(file_id: str, filename: str, _: None = Depends(require_login)):
+    if not is_safe_file_id(file_id) or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    shared_root = (BASE_DIR / "data" / "shared_files").resolve()
+    path = (shared_root / file_id / filename).resolve()
+    if shared_root != path and shared_root not in path.parents:
+        raise HTTPException(status_code=404, detail="File not found")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    media_type = guess_media_type(path.name)
+    disposition = "inline" if media_type.startswith("image/") else "attachment"
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=path.name,
+        content_disposition_type=disposition,
+    )
 
 
 @app.get("/scheduled-tasks", response_class=HTMLResponse)
@@ -674,6 +696,17 @@ def current_tool_messages(conversation: dict | None, assistant_id: str) -> list[
 
 def sse(event: str, payload: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def is_safe_file_id(value: str) -> bool:
+    return len(value) == 32 and all(char in "0123456789abcdef" for char in value)
+
+
+def guess_media_type(filename: str) -> str:
+    import mimetypes
+
+    media_type, _ = mimetypes.guess_type(filename)
+    return media_type or "application/octet-stream"
 
 
 if __name__ == "__main__":
