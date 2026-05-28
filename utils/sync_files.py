@@ -78,7 +78,7 @@ def run_local(host, port, extensions):
         s.sendall(struct.pack('!I', len(filtered_files)))
         
         for file_path in filtered_files:
-            relative_path = str(file_path.relative_to(root_dir))
+            relative_path = file_path.relative_to(root_dir).as_posix()
             send_file(s, relative_path, file_path)
         
         print(f"\n同步完成，共成功发送 {len(filtered_files)} 个文件。")

@@ -2,6 +2,41 @@
 // 依赖：markdown.js（escapeHtml, renderAnswer via dom-utils.js）
 // 依赖：dom-utils.js（assistantParts, lastPart, renderAnswer, collapseReasoning, scrollToBottom）
 
+const answerRevealFrames = new WeakMap();
+
+function revealStepSize(pendingLength) {
+  if (pendingLength > 600) return 3;
+  if (pendingLength > 280) return 2;
+  if (pendingLength > 100) return 1;
+  return 1;
+}
+
+function startAnswerReveal(item) {
+  if (answerRevealFrames.has(item)) return;
+  item.classList.add("answer-revealing");
+
+  const tick = () => {
+    const visible = item.dataset.raw || "";
+    const target = item.dataset.rawTarget || visible;
+    const pendingLength = target.length - visible.length;
+
+    if (pendingLength <= 0) {
+      item.classList.remove("answer-revealing");
+      answerRevealFrames.delete(item);
+      renderAnswer(item);
+      return;
+    }
+
+    const nextLength = visible.length + Math.min(revealStepSize(pendingLength), pendingLength);
+    item.dataset.raw = target.slice(0, nextLength);
+    renderAnswer(item);
+    scrollToBottom();
+    answerRevealFrames.set(item, requestAnimationFrame(tick));
+  };
+
+  answerRevealFrames.set(item, requestAnimationFrame(tick));
+}
+
 function appendReasoningDelta(messageId, delta) {
   const parts = assistantParts(messageId);
   if (!parts) return;
@@ -29,12 +64,15 @@ function appendAnswerDelta(messageId, delta) {
     item.className = "answer markdown-body";
     item.dataset.partType = "answer";
     item.dataset.raw = "";
+    item.dataset.rawTarget = "";
     parts.appendChild(item);
   }
-  item.dataset.raw = (item.dataset.raw || item.textContent) + delta;
-  renderAnswer(item);
+  if (item.dataset.raw === undefined) {
+    item.dataset.raw = item.textContent || "";
+  }
+  item.dataset.rawTarget = (item.dataset.rawTarget || item.dataset.raw || "") + delta;
+  startAnswerReveal(item);
   collapseReasoning(messageId);
-  scrollToBottom();
 }
 
 function appendToolMessage(messageId, message) {
