@@ -8,7 +8,7 @@ TOOL_DEFINITION = {
     "type": "function",
     "function": {
         "name": "send_dingtalk_message",
-        "description": "Send a DingTalk markdown message to user. When we say '鍙戦€佹秷鎭? or other similar words, it means you should call this tool.",
+        "description": "Send a DingTalk markdown message to user. When we say '发送消息' or other similar words, it means you should call this tool.",
         "parameters": {
             "type": "object",
             "properties": {
