@@ -19,9 +19,20 @@ class TaskStore:
     # Public API
     # ------------------------------------------------------------------
 
-    def list_conversations(self) -> list[dict[str, Any]]:
+    def list_conversations(self, limit: int = 10) -> list[dict[str, Any]]:
         with self.lock:
-            return sorted(self._read_all(), key=lambda item: item["updated_at"], reverse=True)
+            paths = sorted(
+                self.dir.glob("*.json"),
+                key=lambda p: int(p.stem.split("-")[0]) if p.stem.split("-")[0].isdigit() else 0,
+                reverse=True,
+            )[:limit]
+            conversations = []
+            for path in paths:
+                try:
+                    conversations.append(normalize_conversation(json.loads(path.read_text(encoding="utf-8"))))
+                except (json.JSONDecodeError, OSError):
+                    pass
+            return sorted(conversations, key=lambda item: item["updated_at"], reverse=True)
 
     def get_conversation(self, conversation_id: str) -> dict[str, Any] | None:
         with self.lock:
@@ -246,7 +257,7 @@ class TaskStore:
         return matches[0] if matches else None
 
     def _write_file(self, seq: int, conversation: dict[str, Any]) -> None:
-        path = self.dir / f"{seq:04d}-{conversation['id']}.json"
+        path = self.dir / f"{seq:06d}-{conversation['id']}.json"
         write_json_atomic(path, conversation)
 
     def _read_one(self, conversation_id: str) -> dict[str, Any] | None:
