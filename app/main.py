@@ -774,7 +774,9 @@ def format_memory_block(memories: list[dict]) -> str:
         if not content:
             continue
         lines.append(f"{format_memory_time(memory.get('updated_at', ''))} {memory.get('id', '')} {content}".strip())
-    now_str = datetime.now(tz=ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M")
+    WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    _now = datetime.now(tz=ZoneInfo("Asia/Shanghai"))
+    now_str = _now.strftime("%Y-%m-%d %H时") + " " + WEEKDAYS[_now.weekday()]
     if not lines:
         return f"现在的时间是：{now_str}"
     return f"现在的时间是：{now_str}，你拥有的记忆：\n" + "\n".join(lines)
