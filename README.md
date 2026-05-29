@@ -1,6 +1,6 @@
 # CuteHarness
 
-CuteHarness is a small FastAPI web app for password-protected multi-turn Agent chat. It streams DeepSeek V4 Flash thinking and final-answer output to the browser, supports DeepSeek tool calls, and can call local tools such as Python execution, application scheduled tasks, and DingTalk messages.
+CuteHarness is a small FastAPI web app for password-protected multi-turn Agent chat. It streams OpenAI-compatible model thinking and final-answer output to the browser, supports tool calls, and can call local tools such as Python execution, application scheduled tasks, and DingTalk messages.
 
 ## Setup
 
@@ -13,11 +13,15 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 Open `http://127.0.0.1:8000`.
 
-The local `.env` file contains the DeepSeek API key and app password. Configure `DINGTALK_WEBHOOK_URL` before expecting DingTalk delivery.
+The local `.env` file contains model provider API keys and the app password. Configure `DINGTALK_WEBHOOK_URL` before expecting DingTalk delivery.
 
 ## Configuration
 
 - `DEEPSEEK_API_KEY`: DeepSeek API key.
+- `DEEPSEEK_BASE_URL`: DeepSeek OpenAI-compatible API base URL. Defaults to `https://api.deepseek.com`.
+- `DEEPSEEK_MODEL`: startup/default DeepSeek model fallback. Defaults to `deepseek-v4-flash`.
+- `MIMO_API_KEY`: Xiaomi MiMo API key.
+- `MIMO_BASE_URL`: Xiaomi MiMo OpenAI-compatible API base URL. Defaults to `https://api.xiaomimimo.com/v1`.
 - `APP_PASSWORD`: web login password. The session cookie is valid for 30 days.
 - `SECRET_KEY`: session signing key.
 - `DINGTALK_WEBHOOK_URL`: DingTalk robot webhook URL.
@@ -27,7 +31,7 @@ The local `.env` file contains the DeepSeek API key and app password. Configure 
 
 Conversation records are stored as individual JSON files under `data/conversations/`.
 
-Application scheduled tasks are stored in `data/scheduled_tasks.json`, UI-editable Agent settings are stored in `data/settings.json`, and global Agent memories are stored in `data/memories.json`.
+Application scheduled tasks are stored in `data/scheduled_tasks.json`, UI-editable Agent settings including active model provider/model are stored in `data/settings.json`, and global Agent memories are stored in `data/memories.json`.
 
 ## Agent Tools
 
