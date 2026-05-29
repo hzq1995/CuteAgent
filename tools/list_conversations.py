@@ -20,8 +20,8 @@ TOOL_DEFINITION = {
 
 
 def run(context: ToolContext, limit: int = 10) -> list[dict[str, Any]]:
-    all_conversations = context.task_store.list_conversations()
+    conversations = context.task_store.list_conversations(limit=limit)
     return [
         {"id": c["id"], "title": c["title"], "updated_at": c["updated_at"]}
-        for c in all_conversations[:limit]
+        for c in conversations
     ]
