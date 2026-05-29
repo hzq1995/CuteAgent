@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -127,11 +127,10 @@ async def create_conversation(
     request: Request,
     background_tasks: BackgroundTasks,
     prompt: str = Form(""),
-    files: list[UploadFile] | None = File(None),
 ):
     require_login(request)
     cleaned_prompt = prompt.strip()
-    uploads = non_empty_uploads(files)
+    uploads = await uploaded_files_from_request(request)
     if not cleaned_prompt and not uploads:
         if wants_json_response(request):
             return JSONResponse({"error": "Prompt is required"}, status_code=400)
@@ -169,11 +168,10 @@ async def append_message(
     request: Request,
     background_tasks: BackgroundTasks,
     prompt: str = Form(""),
-    files: list[UploadFile] | None = File(None),
 ):
     require_login(request)
     cleaned_prompt = prompt.strip()
-    uploads = non_empty_uploads(files)
+    uploads = await uploaded_files_from_request(request)
     if not cleaned_prompt and not uploads:
         if wants_json_response(request):
             return JSONResponse({"error": "Prompt is required"}, status_code=400)
@@ -720,8 +718,9 @@ def submit_payload(conversation_id: str, user_message: dict, assistant_message: 
     }
 
 
-def non_empty_uploads(files: list[UploadFile] | None) -> list[UploadFile]:
-    return [item for item in files or [] if item and item.filename]
+async def uploaded_files_from_request(request: Request) -> list[UploadFile]:
+    form = await request.form()
+    return [item for item in form.getlist("files") if hasattr(item, "filename") and item.filename]
 
 
 async def save_uploaded_files(conversation_id: str, message_id: str, uploads: list[UploadFile]) -> list[dict]:
