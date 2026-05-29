@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     deepseek_model: str = Field("deepseek-v4-flash", alias="DEEPSEEK_MODEL")
     dingtalk_webhook_url: str = Field("", alias="DINGTALK_WEBHOOK_URL")
     dingtalk_access_token: str = Field("", alias="DINGTALK_ACCESS_TOKEN")
+    dingtalk_public_base_url: str = Field("https://tenzi.store:7997/", alias="DINGTALK_PUBLIC_BASE_URL")
 
 
 @lru_cache

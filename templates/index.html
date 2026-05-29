@@ -23,7 +23,26 @@
               {% for message in conversation.messages %}
                 {% if message.role == "user" %}
                   <article class="message user-message">
-                    <div class="message-bubble">{{ message.content }}</div>
+                    <div class="user-message-stack">
+                      <div class="message-bubble">{{ message.content }}</div>
+                      {% if message.attachments %}
+                        <div class="upload-attachments">
+                          {% for attachment in message.attachments %}
+                            {% if attachment.is_image %}
+                              <a class="upload-image-link" href="{{ attachment.url }}" target="_blank" rel="noopener">
+                                <img src="{{ attachment.url }}" alt="{{ attachment.name }}">
+                              </a>
+                            {% else %}
+                              <a class="upload-download" href="{{ attachment.url }}" download>
+                                <span class="upload-file-name">{{ attachment.name }}</span>
+                                <span class="upload-file-meta">{{ attachment.mime_type }} · {{ attachment.size_bytes }} bytes</span>
+                                <span class="upload-file-path">{{ attachment.path }}</span>
+                              </a>
+                            {% endif %}
+                          {% endfor %}
+                        </div>
+                      {% endif %}
+                    </div>
                   </article>
                 {% elif message.role == "assistant" %}
                   <article class="message assistant-message" data-message-id="{{ message.id }}">
@@ -130,15 +149,22 @@
             class="composer"
             method="post"
             action="{% if conversation %}/conversations/{{ conversation.id }}/messages{% else %}/conversations{% endif %}"
+            enctype="multipart/form-data"
           >
-            <textarea
+            <div class="composer-main">
+              <div class="selected-files" id="selected-files" aria-live="polite"></div>
+              <textarea
               name="prompt"
               rows="1"
               placeholder="{% if is_running %}当前回复生成中...{% else %}发送消息给 CuteHarness{% endif %}"
               {% if is_running %}disabled{% endif %}
-              required
             ></textarea>
+            </div>
+            <div class="composer-actions">
+              <input id="composer-files" name="files" type="file" multiple {% if is_running %}disabled{% endif %}>
+              <button class="file-button" type="button" aria-label="Attach files" title="Attach files" {% if is_running %}disabled{% endif %}>+</button>
             <button type="submit" {% if is_running %}disabled{% endif %}>发送</button>
+            </div>
           </form>
         </section>
       </main>
@@ -153,7 +179,10 @@
       // 全局 DOM 引用（供各模块访问）
       const form = document.querySelector(".composer");
       const textarea = document.querySelector(".composer textarea");
-      const button = document.querySelector(".composer button");
+      const button = document.querySelector(".composer button[type='submit']");
+      const fileInput = document.getElementById("composer-files");
+      const fileButton = document.querySelector(".composer .file-button");
+      const selectedFiles = document.getElementById("selected-files");
       let messageList = document.getElementById("message-list");
       const originalButtonText = button ? button.textContent : "";
       let currentSource = null;

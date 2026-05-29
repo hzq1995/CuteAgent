@@ -140,12 +140,48 @@ function ensureMessageList(prompt) {
   return messageList;
 }
 
-function appendUserMessage(content) {
+function appendUserMessage(content, attachments = []) {
   const list = ensureMessageList(content);
   if (!list) return null;
   const article = document.createElement("article");
   article.className = "message user-message";
-  article.innerHTML = `<div class="message-bubble">${escapeHtml(content)}</div>`;
+  const stack = document.createElement("div");
+  stack.className = "user-message-stack";
+  const bubble = document.createElement("div");
+  bubble.className = "message-bubble";
+  bubble.textContent = content || "[上传文件]";
+  stack.appendChild(bubble);
+
+  if (attachments.length) {
+    const attachmentList = document.createElement("div");
+    attachmentList.className = "upload-attachments";
+    attachments.forEach((attachment) => {
+      if (attachment.preview_url) {
+        const link = document.createElement("a");
+        link.className = "upload-image-link";
+        link.href = attachment.preview_url;
+        link.target = "_blank";
+        link.rel = "noopener";
+        const image = document.createElement("img");
+        image.src = attachment.preview_url;
+        image.alt = attachment.name;
+        link.appendChild(image);
+        attachmentList.appendChild(link);
+        return;
+      }
+
+      const file = document.createElement("div");
+      file.className = "upload-download upload-download-static";
+      file.innerHTML = `
+        <span class="upload-file-name">${escapeHtml(attachment.name)}</span>
+        <span class="upload-file-meta">${escapeHtml(attachment.mime_type)} · ${attachment.size_bytes} bytes</span>
+      `;
+      attachmentList.appendChild(file);
+    });
+    stack.appendChild(attachmentList);
+  }
+
+  article.appendChild(stack);
   list.appendChild(article);
   scrollToBottom({ force: true });
   return article;

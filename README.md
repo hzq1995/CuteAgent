@@ -21,6 +21,7 @@ The local `.env` file contains the DeepSeek API key and app password. Configure 
 - `APP_PASSWORD`: web login password. The session cookie is valid for 30 days.
 - `SECRET_KEY`: session signing key.
 - `DINGTALK_WEBHOOK_URL`: DingTalk robot webhook URL.
+- `DINGTALK_PUBLIC_BASE_URL`: public HTTPS base URL used for DingTalk markdown file links. Defaults to `https://tenzi.store:7997/`.
 
 ## Data
 
@@ -59,7 +60,7 @@ Built-in tools:
 - `add_memory`: adds a key, durable, non-duplicate long-term memory.
 - `update_memory`: updates an existing memory by id.
 - `delete_memory`: deletes an existing memory by id.
-- `send_dingtalk_message`: sends a DingTalk markdown message and automatically prefixes title and body with `[业务通知]`.
+- `send_dingtalk_message`: sends a DingTalk markdown message and automatically prefixes title and body with `[业务通知]`. It accepts optional `file_paths` workspace-relative paths; image files are appended inline and other files are appended as links using `DINGTALK_PUBLIC_BASE_URL`.
 
 - `list_conversations`: lists recent conversation history.
 - `get_conversation`: reads a conversation by id.
