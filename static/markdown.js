@@ -30,7 +30,7 @@ function parseTableRow(line) {
 
 function isTableDivider(line) {
   const cells = parseTableRow(line);
-  return Boolean(cells && cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell)));
+  return Boolean(cells && cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell)));
 }
 
 function renderTable(rows) {
