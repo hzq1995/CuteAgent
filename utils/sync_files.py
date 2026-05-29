@@ -15,7 +15,20 @@ except ImportError:
 BUFFER_SIZE = 4096
 DEFAULT_PORT = 7070
 DEFAULT_EXTENSIONS = ['.py', '.html', '.css', '.js', '.md']  # 默认同步的文件类型
-DEFAULT_EXCLUDE_DIRS = {'data', 'tests', 'skills', '.git', '__pycache__', 'venv', '.vscode', 'output', 'daily_plots', 'datasets', '.pytest_cache'}
+DEFAULT_EXCLUDE_DIRS = {
+    'data',
+    'tests',
+    'skills',
+    '.git',
+    '__pycache__',
+    'venv',
+    '.vscode',
+    'output',
+    'daily_plots',
+    'datasets',
+    '.pytest_cache',
+    '.tmp',
+}
 HANDSHAKE_MSG = b"SYNC_START_V1"
 HANDSHAKE_ACK = b"SYNC_ACK_V1"
 
