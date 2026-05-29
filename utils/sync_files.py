@@ -220,7 +220,7 @@ if __name__ == "__main__":
     # 38.95.74.246 HongKongBro
     # 43.133.7.44 JapanBro
     local_parser = subparsers.add_parser("local", help="启动本地同步模式")
-    local_parser.add_argument("--host", default="tenzi.store", help="云服务器 IP 地址")  # 
+    local_parser.add_argument("--host", default="43.153.130.196", help="云服务器 IP 地址")  # 
     local_parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"服务器端口，默认 {DEFAULT_PORT}")
     local_parser.add_argument("--ext", nargs='+', default=DEFAULT_EXTENSIONS, help=f"要同步的文件后缀，默认 {' '.join(DEFAULT_EXTENSIONS)}")
     
