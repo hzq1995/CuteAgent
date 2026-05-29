@@ -369,6 +369,7 @@ def normalize_message(message: dict[str, Any]) -> None:
     message.setdefault("parts", [])
     message.setdefault("inline_rendered", False)
     message.setdefault("api_messages", [])
+    message.setdefault("attachments", [])
 
 
 def new_message(role: str, content: str, status: str) -> dict[str, Any]:
@@ -383,6 +384,7 @@ def new_message(role: str, content: str, status: str) -> dict[str, Any]:
         "updated_at": now,
         "dingding_result": None,
         "parts": [],
+        "attachments": [],
     }
 
 

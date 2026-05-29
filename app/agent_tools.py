@@ -25,6 +25,7 @@ class ToolContext:
     python_timeout_seconds: int
     dingtalk_webhook_url: str = ""
     dingtalk_access_token: str = ""
+    dingtalk_public_base_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,7 @@ class AgentToolRunner:
         python_timeout_seconds: int,
         dingtalk_webhook_url: str = "",
         dingtalk_access_token: str = "",
+        dingtalk_public_base_url: str = "",
         tools_dir: Path = DEFAULT_TOOLS_DIR,
         registry: ToolRegistry | None = None,
         disabled_tools: Iterable[str] | None = None,
@@ -65,6 +67,7 @@ class AgentToolRunner:
             python_timeout_seconds=python_timeout_seconds,
             dingtalk_webhook_url=dingtalk_webhook_url,
             dingtalk_access_token=dingtalk_access_token,
+            dingtalk_public_base_url=dingtalk_public_base_url,
         )
         self.registry = registry or load_tools(tools_dir)
         self.disabled_tools = set(disabled_tools or [])

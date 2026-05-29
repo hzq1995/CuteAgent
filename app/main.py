@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -126,17 +126,27 @@ async def index(request: Request):
 async def create_conversation(
     request: Request,
     background_tasks: BackgroundTasks,
-    prompt: str = Form(...),
+    prompt: str = Form(""),
+    files: list[UploadFile] | None = File(None),
 ):
     require_login(request)
     cleaned_prompt = prompt.strip()
-    if not cleaned_prompt:
+    uploads = non_empty_uploads(files)
+    if not cleaned_prompt and not uploads:
         if wants_json_response(request):
             return JSONResponse({"error": "Prompt is required"}, status_code=400)
         return RedirectResponse("/", status_code=303)
 
     conversation = store.create_conversation(cleaned_prompt)
     user = conversation["messages"][0]
+    attachments = await save_uploaded_files(conversation["id"], user["id"], uploads)
+    if attachments:
+        user = store.update_message(
+            conversation["id"],
+            user["id"],
+            content=compose_prompt_with_attachments(cleaned_prompt, attachments),
+            attachments=attachments,
+        )
     assistant = conversation["messages"][-1]
     background_tasks.add_task(run_conversation_turn, conversation["id"], assistant["id"])
     if wants_json_response(request):
@@ -158,11 +168,13 @@ async def append_message(
     conversation_id: str,
     request: Request,
     background_tasks: BackgroundTasks,
-    prompt: str = Form(...),
+    prompt: str = Form(""),
+    files: list[UploadFile] | None = File(None),
 ):
     require_login(request)
     cleaned_prompt = prompt.strip()
-    if not cleaned_prompt:
+    uploads = non_empty_uploads(files)
+    if not cleaned_prompt and not uploads:
         if wants_json_response(request):
             return JSONResponse({"error": "Prompt is required"}, status_code=400)
         return RedirectResponse(f"/conversations/{conversation_id}", status_code=303)
@@ -178,6 +190,14 @@ async def append_message(
         return RedirectResponse(f"/conversations/{conversation_id}", status_code=303)
 
     user = store.append_user_message(conversation_id, cleaned_prompt)
+    attachments = await save_uploaded_files(conversation_id, user["id"], uploads)
+    if attachments:
+        user = store.update_message(
+            conversation_id,
+            user["id"],
+            content=compose_prompt_with_attachments(cleaned_prompt, attachments),
+            attachments=attachments,
+        )
     assistant = store.create_assistant_message(conversation_id)
     background_tasks.add_task(run_conversation_turn, conversation_id, assistant["id"])
     if wants_json_response(request):
@@ -278,6 +298,52 @@ async def shared_file(file_id: str, filename: str, _: None = Depends(require_log
     shared_root = (BASE_DIR / "data" / "shared_files").resolve()
     path = (shared_root / file_id / filename).resolve()
     if shared_root != path and shared_root not in path.parents:
+        raise HTTPException(status_code=404, detail="File not found")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    media_type = guess_media_type(path.name)
+    disposition = "inline" if media_type.startswith("image/") else "attachment"
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=path.name,
+        content_disposition_type=disposition,
+    )
+
+
+@app.get("/uploads/{conversation_id}/{message_id}/{filename}")
+async def uploaded_file(conversation_id: str, message_id: str, filename: str, _: None = Depends(require_login)):
+    if not is_safe_upload_id(conversation_id) or not is_safe_upload_id(message_id):
+        raise HTTPException(status_code=404, detail="File not found")
+    if "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    upload_root = (BASE_DIR / "data" / "uploads").resolve()
+    path = (upload_root / conversation_id / message_id / filename).resolve()
+    if upload_root != path and upload_root not in path.parents:
+        raise HTTPException(status_code=404, detail="File not found")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    media_type = guess_media_type(path.name)
+    disposition = "inline" if media_type.startswith("image/") else "attachment"
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=path.name,
+        content_disposition_type=disposition,
+    )
+
+
+@app.get("/public-files/{file_id}/{filename}")
+async def public_file(file_id: str, filename: str):
+    if not is_safe_file_id(file_id) or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    public_root = (BASE_DIR / "data" / "public_files").resolve()
+    path = (public_root / file_id / filename).resolve()
+    if public_root != path and public_root not in path.parents:
         raise HTTPException(status_code=404, detail="File not found")
     if not path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
@@ -654,6 +720,88 @@ def submit_payload(conversation_id: str, user_message: dict, assistant_message: 
     }
 
 
+def non_empty_uploads(files: list[UploadFile] | None) -> list[UploadFile]:
+    return [item for item in files or [] if item and item.filename]
+
+
+async def save_uploaded_files(conversation_id: str, message_id: str, uploads: list[UploadFile]) -> list[dict]:
+    if not uploads:
+        return []
+
+    target_dir = (BASE_DIR / "data" / "uploads" / conversation_id / message_id).resolve()
+    uploads_root = (BASE_DIR / "data" / "uploads").resolve()
+    if uploads_root != target_dir and uploads_root not in target_dir.parents:
+        raise HTTPException(status_code=400, detail="Invalid upload path")
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    attachments = []
+    used_names: set[str] = set()
+    for upload in uploads:
+        filename = unique_filename(safe_upload_filename(upload.filename or "upload"), used_names, target_dir)
+        path = target_dir / filename
+        size_bytes = 0
+        with path.open("wb") as handle:
+            while True:
+                chunk = await upload.read(1024 * 1024)
+                if not chunk:
+                    break
+                size_bytes += len(chunk)
+                handle.write(chunk)
+        await upload.close()
+
+        rel_path = path.relative_to(BASE_DIR).as_posix()
+        mime_type = upload.content_type or guess_media_type(filename)
+        attachments.append(
+            {
+                "name": filename,
+                "path": rel_path,
+                "url": f"/uploads/{conversation_id}/{message_id}/{quote(filename)}",
+                "mime_type": mime_type,
+                "size_bytes": size_bytes,
+                "is_image": mime_type.startswith("image/"),
+            }
+        )
+    return attachments
+
+
+def compose_prompt_with_attachments(prompt: str, attachments: list[dict]) -> str:
+    lines = []
+    cleaned_prompt = prompt.strip()
+    if cleaned_prompt:
+        lines.append(cleaned_prompt)
+        lines.append("")
+    lines.append("[上传文件]")
+    for index, attachment in enumerate(attachments, start=1):
+        lines.extend(
+            [
+                f"{index}. 文件名: {attachment['name']}",
+                f"   类型: {attachment['mime_type']}",
+                f"   大小: {attachment['size_bytes']} bytes",
+                f"   工作区路径: {attachment['path']}",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def safe_upload_filename(filename: str) -> str:
+    name = Path(filename).name.strip().strip(".")
+    if not name:
+        name = "upload"
+    return re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", name) or "upload"
+
+
+def unique_filename(filename: str, used_names: set[str], target_dir: Path) -> str:
+    candidate = filename
+    stem = Path(filename).stem or "upload"
+    suffix = Path(filename).suffix
+    index = 1
+    while candidate.lower() in used_names or (target_dir / candidate).exists():
+        candidate = f"{stem}-{index}{suffix}"
+        index += 1
+    used_names.add(candidate.lower())
+    return candidate
+
+
 def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> None:
     store.update_conversation(conversation_id, status="running", error="")
     store.update_message(conversation_id, assistant_message_id, status="running")
@@ -673,6 +821,7 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
             python_timeout_seconds=app_config["python_timeout_seconds"],
             dingtalk_webhook_url=settings.dingtalk_webhook_url,
             dingtalk_access_token=settings.dingtalk_access_token,
+            dingtalk_public_base_url=settings.dingtalk_public_base_url,
             disabled_tools=tool_settings_store.disabled_tools(),
         )
         messages = build_model_context(conversation_id, assistant_message_id, app_config["system_prompt"])
@@ -865,6 +1014,10 @@ def sse(event: str, payload: dict) -> str:
 
 def is_safe_file_id(value: str) -> bool:
     return len(value) == 32 and all(char in "0123456789abcdef" for char in value)
+
+
+def is_safe_upload_id(value: str) -> bool:
+    return bool(value) and len(value) <= 64 and all(char in "0123456789abcdef" for char in value)
 
 
 def guess_media_type(filename: str) -> str:
