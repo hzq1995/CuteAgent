@@ -17,7 +17,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.agent_tools import AgentToolRunner, load_tools, parse_tool_arguments
 from app.app_settings import AppSettingsStore
 from app.config import BASE_DIR, get_settings
-from app.deepseek_client import DeepSeekClient
+from app.llm_client import OpenAICompatibleClient
+from app.llm_config import MIMO_PROVIDER, provider_options, request_options_for_provider
 from app.memory_store import MemoryStore
 from app.scheduler_store import ScheduledTaskStore
 from app.storage import TaskStore
@@ -504,6 +505,8 @@ async def settings_page(request: Request):
 @app.post("/settings", response_class=HTMLResponse)
 async def update_settings(
     request: Request,
+    llm_provider: str = Form("deepseek"),
+    llm_model: str = Form("deepseek-v4-flash"),
     system_prompt: str = Form(""),
     python_timeout_seconds: int = Form(30),
     max_tool_rounds: int = Form(5),
@@ -511,7 +514,7 @@ async def update_settings(
     require_login(request)
     form = await request.form()
     enabled_tools = form.getlist("enabled_tools")
-    values = app_settings_store.update(system_prompt, python_timeout_seconds, max_tool_rounds)
+    values = app_settings_store.update(llm_provider, llm_model, system_prompt, python_timeout_seconds, max_tool_rounds)
     registry = load_tools()
     tool_settings_store.update_enabled_tools(list(registry.tools.keys()), enabled_tools)
     return templates.TemplateResponse(
@@ -608,6 +611,7 @@ def settings_context(
         )
     return {
         "app_settings": app_settings or app_settings_store.get(),
+        "llm_providers": provider_options(),
         "tool_settings": {"disabled_tools": sorted(disabled_tools)},
         "tools": tools,
         "memories": memory_store.list_memories(),
@@ -807,11 +811,7 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
 
     try:
         app_config = app_settings_store.get()
-        client = DeepSeekClient(
-            api_key=settings.deepseek_api_key,
-            base_url=settings.deepseek_base_url,
-            model=settings.deepseek_model,
-        )
+        client = create_llm_client(app_config)
         tool_runner = AgentToolRunner(
             base_dir=BASE_DIR,
             scheduled_tasks=scheduled_task_store,
@@ -913,6 +913,23 @@ def build_system_prompt(system_prompt: str, memories: list[dict]) -> str:
     if memory_block:
         parts.append(memory_block)
     return "\n\n".join(parts)
+
+
+def create_llm_client(app_config: dict) -> OpenAICompatibleClient:
+    provider = app_config["llm_provider"]
+    model = app_config["llm_model"] or settings.deepseek_model
+    if provider == MIMO_PROVIDER:
+        api_key = settings.mimo_api_key
+        base_url = settings.mimo_base_url
+    else:
+        api_key = settings.deepseek_api_key
+        base_url = settings.deepseek_base_url
+    return OpenAICompatibleClient(
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        request_options=request_options_for_provider(provider),
+    )
 
 
 def format_memory_block(memories: list[dict]) -> str:

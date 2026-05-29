@@ -20,6 +20,41 @@
             <p class="success-note">设置已保存。</p>
           {% endif %}
           <form class="panel-form" method="post" action="/settings">
+            <section class="model-settings">
+              <div class="settings-section-head">
+                <div>
+                  <p class="kicker">Model</p>
+                  <h2>模型服务</h2>
+                </div>
+                <code>data/settings.json</code>
+              </div>
+              <div class="form-row two">
+                <label>
+                  <span>服务商</span>
+                  <select name="llm_provider" id="llm-provider">
+                    {% for provider in llm_providers %}
+                      <option value="{{ provider.id }}" {% if app_settings.llm_provider == provider.id %}selected{% endif %}>
+                        {{ provider.label }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label>
+                  <span>模型</span>
+                  <select name="llm_model" id="llm-model">
+                    {% for provider in llm_providers %}
+                      <optgroup label="{{ provider.label }}" data-provider="{{ provider.id }}">
+                        {% for model in provider.models %}
+                          <option value="{{ model.id }}" data-provider="{{ provider.id }}" {% if app_settings.llm_provider == provider.id and app_settings.llm_model == model.id %}selected{% endif %}>
+                            {{ model.label }}
+                          </option>
+                        {% endfor %}
+                      </optgroup>
+                    {% endfor %}
+                  </select>
+                </label>
+              </div>
+            </section>
             <label>
               <span>系统提示词</span>
               <textarea name="system_prompt" rows="12" placeholder="定义 CuteHarness 的角色、边界和工具使用策略。">{{ app_settings.system_prompt }}</textarea>
@@ -101,5 +136,32 @@
         </section>
       </main>
     </div>
+    <script>
+      (() => {
+        const providerSelect = document.getElementById("llm-provider");
+        const modelSelect = document.getElementById("llm-model");
+        if (!providerSelect || !modelSelect) return;
+
+        const syncModels = () => {
+          const provider = providerSelect.value;
+          let selectedVisible = false;
+          for (const group of modelSelect.querySelectorAll("optgroup")) {
+            const visible = group.dataset.provider === provider;
+            group.hidden = !visible;
+            for (const option of group.querySelectorAll("option")) {
+              option.disabled = !visible;
+              if (visible && option.selected) selectedVisible = true;
+            }
+          }
+          if (!selectedVisible) {
+            const first = modelSelect.querySelector(`option[data-provider="${provider}"]`);
+            if (first) first.selected = true;
+          }
+        };
+
+        providerSelect.addEventListener("change", syncModels);
+        syncModels();
+      })();
+    </script>
   </body>
 </html>
