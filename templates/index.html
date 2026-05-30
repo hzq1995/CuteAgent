@@ -202,7 +202,7 @@
 
       // 渲染已有的 answer 块并滚动到底
       document.querySelectorAll(".answer").forEach(renderAnswer);
-      scrollToBottom();
+      scrollToBottom({ instant: true });
 
       // 注册输入框与表单事件
       initComposer();

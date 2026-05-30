@@ -11,17 +11,35 @@ function renderAnswer(target) {
 }
 
 const CHAT_BOTTOM_THRESHOLD = 80;
+const CHAT_SCROLL_SNAP_THRESHOLD = 2;
+const CHAT_SCROLL_MAX_STEP = 40;
+const CHAT_SCROLL_FORCE_MAX_STEP = 72;
 let chatAutoFollow = true;
 let chatScrollTrackingReady = false;
 let pendingChatScrollFrame = 0;
+let chatScrollAnimating = false;
+let chatScrollForceMode = false;
 
 function chatScroller() {
   return document.getElementById("chat-scroll");
 }
 
+function chatMaxScrollTop(scroller) {
+  return Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+}
+
 function isChatNearBottom(scroller = chatScroller()) {
   if (!scroller) return true;
-  return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= CHAT_BOTTOM_THRESHOLD;
+  return chatMaxScrollTop(scroller) - scroller.scrollTop <= CHAT_BOTTOM_THRESHOLD;
+}
+
+function cancelChatScrollAnimation() {
+  if (pendingChatScrollFrame) {
+    cancelAnimationFrame(pendingChatScrollFrame);
+    pendingChatScrollFrame = 0;
+  }
+  chatScrollAnimating = false;
+  chatScrollForceMode = false;
 }
 
 function initChatScrollTracking() {
@@ -31,7 +49,19 @@ function initChatScrollTracking() {
   chatScrollTrackingReady = true;
 
   scroller.addEventListener("scroll", () => {
+    if (chatScrollAnimating) return;
     chatAutoFollow = isChatNearBottom(scroller);
+  });
+
+  ["wheel", "touchstart", "pointerdown"].forEach((eventName) => {
+    scroller.addEventListener(
+      eventName,
+      () => {
+        cancelChatScrollAnimation();
+        chatAutoFollow = isChatNearBottom(scroller);
+      },
+      { passive: true }
+    );
   });
 
   document.addEventListener(
@@ -50,21 +80,41 @@ function scrollToBottom(options = {}) {
   initChatScrollTracking();
   if (!options.force && !chatAutoFollow && !isChatNearBottom(scroller)) return;
 
-  const applyScroll = () => {
-    pendingChatScrollFrame = 0;
-    scroller.scrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  const applyInstantScroll = () => {
+    cancelChatScrollAnimation();
+    scroller.scrollTop = chatMaxScrollTop(scroller);
     chatAutoFollow = true;
   };
 
-  if (options.force && pendingChatScrollFrame) {
-    cancelAnimationFrame(pendingChatScrollFrame);
+  if (options.instant) {
+    applyInstantScroll();
+    return;
+  }
+
+  chatScrollForceMode = chatScrollForceMode || Boolean(options.force);
+  chatScrollAnimating = true;
+
+  const applyAnimatedScroll = () => {
     pendingChatScrollFrame = 0;
-  }
-  if (options.force) {
-    applyScroll();
-  }
+    const target = chatMaxScrollTop(scroller);
+    const distance = target - scroller.scrollTop;
+
+    if (distance <= CHAT_SCROLL_SNAP_THRESHOLD) {
+      scroller.scrollTop = target;
+      chatAutoFollow = true;
+      chatScrollAnimating = false;
+      chatScrollForceMode = false;
+      return;
+    }
+
+    const maxStep = chatScrollForceMode ? CHAT_SCROLL_FORCE_MAX_STEP : CHAT_SCROLL_MAX_STEP;
+    const easedStep = Math.ceil(distance * (chatScrollForceMode ? 0.24 : 0.14));
+    scroller.scrollTop += Math.min(maxStep, Math.max(1, easedStep));
+    pendingChatScrollFrame = requestAnimationFrame(applyAnimatedScroll);
+  };
+
   if (!pendingChatScrollFrame) {
-    pendingChatScrollFrame = requestAnimationFrame(applyScroll);
+    pendingChatScrollFrame = requestAnimationFrame(applyAnimatedScroll);
   }
 }
 
