@@ -12,3 +12,4 @@ data/settings.json
 data/memories.json
 data/
 .vscode/
+utils/sync_files.py
