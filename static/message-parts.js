@@ -3,19 +3,19 @@
 // 依赖：dom-utils.js（assistantParts, lastPart, renderAnswer, collapseReasoning, scrollToBottom）
 
 const answerRevealFrames = new WeakMap();
+const ANSWER_REVEAL_INTERVAL_MS = 38;
 
 function revealStepSize(pendingLength) {
-  if (pendingLength > 600) return 3;
-  if (pendingLength > 280) return 2;
-  if (pendingLength > 100) return 1;
+  if (pendingLength > 600) return 2;
   return 1;
 }
 
 function startAnswerReveal(item) {
   if (answerRevealFrames.has(item)) return;
   item.classList.add("answer-revealing");
+  let lastRevealAt = 0;
 
-  const tick = () => {
+  const tick = (timestamp) => {
     const visible = item.dataset.raw || "";
     const target = item.dataset.rawTarget || visible;
     const pendingLength = target.length - visible.length;
@@ -26,6 +26,12 @@ function startAnswerReveal(item) {
       renderAnswer(item);
       return;
     }
+
+    if (lastRevealAt && timestamp - lastRevealAt < ANSWER_REVEAL_INTERVAL_MS) {
+      answerRevealFrames.set(item, requestAnimationFrame(tick));
+      return;
+    }
+    lastRevealAt = timestamp;
 
     const nextLength = visible.length + Math.min(revealStepSize(pendingLength), pendingLength);
     item.dataset.raw = target.slice(0, nextLength);

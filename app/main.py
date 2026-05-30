@@ -284,7 +284,7 @@ async def conversation_stream(
                 yield sse("done", {"status": "succeeded", "message_id": assistant_id})
                 break
 
-            await asyncio.sleep(0.35)
+            await asyncio.sleep(0.7)
 
     return StreamingResponse(events(), media_type="text/event-stream")
 
