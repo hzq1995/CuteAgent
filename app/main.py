@@ -49,7 +49,7 @@ async def add_security_headers(request: Request, call_next):
             "Content-Security-Policy",
             "upgrade-insecure-requests; block-all-mixed-content",
         )
-        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        response.headers.setdefault("Strict-Transport-Security", "max-age=0")
     return response
 
 
