@@ -60,6 +60,23 @@ textarea {
   min-width: 0;
 }
 
+.brand-link {
+  border-radius: 8px;
+  color: inherit;
+  margin: -6px;
+  padding: 6px;
+  text-decoration: none;
+}
+
+.brand-link:hover {
+  background: var(--sidebar-hover);
+}
+
+.brand-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .brand-mark {
   align-items: center;
   background: var(--ink);

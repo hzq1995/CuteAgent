@@ -39,6 +39,20 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
+    is_https = request.url.scheme == "https" or forwarded_proto == "https"
+    if is_https:
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "upgrade-insecure-requests; block-all-mixed-content",
+        )
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
+
 def _tojson_unicode(value, indent=None):
     """tojson filter that keeps non-ASCII chars (e.g. Chinese) readable."""
     from markupsafe import Markup

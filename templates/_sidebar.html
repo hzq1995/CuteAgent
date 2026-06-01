@@ -1,11 +1,16 @@
 <aside class="sidebar">
-  <div class="brand">
+  <a
+    class="brand brand-link"
+    href="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}"
+    aria-label="刷新当前页面"
+    title="刷新当前页面"
+  >
     <img class="brand-mark" src="/static/pika.ico?v={{ static_v }}" alt="CuteHarness">
     <div>
       <p class="brand-title">CuteHarness</p>
       <p class="brand-subtitle">Pika remembers you</p>
     </div>
-  </div>
+  </a>
 
   <button
     class="history-toggle"
