@@ -3,7 +3,7 @@
 // 依赖：dom-utils.js（assistantParts, lastPart, renderAnswer, collapseReasoning, scrollToBottom）
 
 const answerRevealFrames = new WeakMap();
-const ANSWER_REVEAL_INTERVAL_MS = 38;
+const ANSWER_REVEAL_INTERVAL_MS = 19;
 
 function revealStepSize(pendingLength) {
   if (pendingLength > 600) return 2;

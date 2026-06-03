@@ -26,6 +26,39 @@ function showSubmitError(message) {
   form.insertAdjacentElement("afterend", error);
 }
 
+function detailToMessage(detail) {
+  if (!detail) return "";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (typeof item === "string") return item;
+        const location = Array.isArray(item.loc) ? item.loc.join(".") : "";
+        const message = item.msg || item.message || JSON.stringify(item);
+        return location ? `${location}: ${message}` : message;
+      })
+      .join("; ");
+  }
+  return detail.message || detail.msg || JSON.stringify(detail);
+}
+
+async function responseErrorMessage(response) {
+  const status = `${response.status} ${response.statusText || ""}`.trim();
+  if (response.status === 413) {
+    return `上传文件太大，服务器 Nginx 拒绝了请求。请调高 Nginx 的 client_max_body_size 后重试。(${status})`;
+  }
+
+  const payload = await response.clone().json().catch(() => null);
+  if (payload) {
+    const message = payload.error || detailToMessage(payload.detail) || detailToMessage(payload.message);
+    if (message) return `${message} (${status})`;
+  }
+
+  const text = (await response.text().catch(() => "")).trim();
+  if (text) return `${text} (${status})`;
+  return `Send failed (${status})`;
+}
+
 function autoResizeTextarea() {
   if (!textarea) return;
   textarea.style.height = "auto";
@@ -172,11 +205,11 @@ function initComposer() {
         },
         body: formData,
       });
-      const payload = await response.json().catch(() => ({}));
-
       if (!response.ok) {
-        throw new Error(payload.error || "Send failed");
+        throw new Error(await responseErrorMessage(response));
       }
+
+      const payload = await response.json().catch(() => ({}));
 
       releaseFileSummaries(optimisticFiles);
       clearAttachedFiles();

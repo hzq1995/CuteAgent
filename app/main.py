@@ -757,14 +757,21 @@ async def save_uploaded_files(conversation_id: str, message_id: str, uploads: li
         filename = unique_filename(safe_upload_filename(upload.filename or "upload"), used_names, target_dir)
         path = target_dir / filename
         size_bytes = 0
-        with path.open("wb") as handle:
-            while True:
-                chunk = await upload.read(1024 * 1024)
-                if not chunk:
-                    break
-                size_bytes += len(chunk)
-                handle.write(chunk)
-        await upload.close()
+        try:
+            with path.open("wb") as handle:
+                while True:
+                    chunk = await upload.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size_bytes += len(chunk)
+                    handle.write(chunk)
+        except OSError as exc:
+            with suppress(OSError):
+                path.unlink()
+            reason = exc.strerror or str(exc)
+            raise HTTPException(status_code=500, detail=f"Failed to save upload '{filename}': {reason}") from exc
+        finally:
+            await upload.close()
 
         rel_path = path.relative_to(BASE_DIR).as_posix()
         mime_type = upload.content_type or guess_media_type(filename)
