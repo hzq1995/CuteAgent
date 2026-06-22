@@ -17,7 +17,8 @@ function setComposerBusy(isBusy) {
     button.type = "submit";
     button.disabled = false;
     button.classList.remove("stop-button");
-    button.textContent = originalButtonText;
+    // 页面在任务进行中打开时，服务端的初始文字是“停止”；空闲时必须固定恢复为“发送”。
+    button.textContent = "发送";
   }
   textarea.placeholder = isBusy ? "等待响应中..." : "发送消息给 CuteHarness";
   form.classList.toggle("disabled", isBusy);
