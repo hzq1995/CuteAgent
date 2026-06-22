@@ -321,6 +321,14 @@ button {
   margin-bottom: 30px;
 }
 
+.context-token-estimate {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 10px auto 0;
+  max-width: 820px;
+  padding: 0 4px;
+}
+
 .chat-header h1,
 .empty-state h1,
 .login-panel h1 {
@@ -749,6 +757,10 @@ button {
 .composer-wrap {
   background: linear-gradient(180deg, rgba(247, 245, 240, 0), var(--bg) 24%);
   padding: 18px clamp(18px, 6vw, 72px) 24px;
+}
+
+.composer-wrap.has-context-token-estimate {
+  padding-bottom: 12px;
 }
 
 .composer {

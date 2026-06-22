@@ -57,7 +57,7 @@ See `skills/工具创建.md` for the tool creation workflow.
 Built-in tools:
 
 - `run_python`: runs local Python code with a timeout.
-- `run_bash`: runs `bash -lc <command>` in the workspace with a timeout.
+- `run_bash`: runs `bash -lc <command>` in the workspace with a timeout. Pass `background: true` for long-running commands; it returns immediately with a PID and a log file under `.cuteharness-logs/`.
 - `edit_file`: edits an existing workspace file by replacing an exact string (unique match or `replace_all`).
 - `grep`: searches workspace file contents with a regex; returns matching files, matching lines with line numbers, or per-file counts.
 - `send_file`: sends a workspace file to the web page (inline image or download link).

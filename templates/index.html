@@ -144,7 +144,7 @@
           <div class="scroll-anchor" id="scroll-anchor" aria-hidden="true"></div>
         </section>
 
-        <section class="composer-wrap">
+        <section class="composer-wrap{% if conversation %} has-context-token-estimate{% endif %}">
           <form
             class="composer"
             method="post"
@@ -167,6 +167,9 @@
               <button class="action-button{% if is_running %} stop-button{% endif %}" type="{% if is_running %}button{% else %}submit{% endif %}">{% if is_running %}&#20572;&#27490;{% else %}&#21457;&#36865;{% endif %}</button>
             </div>
           </form>
+          {% if conversation %}
+            <p class="context-token-estimate" id="context-token-estimate">上下文：约 {{ "{:,}".format(context_token_estimate) }} tokens</p>
+          {% endif %}
         </section>
       </main>
     </div>

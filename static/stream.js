@@ -50,6 +50,14 @@ function startConversationStream(conversationId, options = {}) {
     appendToolMessage(payload.message_id, payload.message);
   });
 
+  source.addEventListener("context_tokens", (event) => {
+    if (!event.data) return;
+    const payload = JSON.parse(event.data);
+    const target = document.getElementById("context-token-estimate");
+    if (!target || typeof payload.estimated_tokens !== "number") return;
+    target.textContent = `上下文：约 ${payload.estimated_tokens.toLocaleString("zh-CN")} tokens`;
+  });
+
   source.addEventListener("error", (event) => {
     if (!event.data) return;
     const payload = JSON.parse(event.data);

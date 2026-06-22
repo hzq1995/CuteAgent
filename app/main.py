@@ -292,6 +292,7 @@ async def conversation_stream(
         sent_answer_len = int(request.query_params.get("answer_offset", "0") or "0")
         sent_tool_count = int(request.query_params.get("tool_count", "0") or "0")
         sent_status = ""
+        sent_context_tokens: int | None = None
 
         while True:
             if await request.is_disconnected():
@@ -348,6 +349,14 @@ async def conversation_stream(
                 for tool_message in tools[sent_tool_count:]:
                     yield sse("tool_call_result", {"message_id": assistant_id, "message": tool_message})
                 sent_tool_count = len(tools)
+
+            context_tokens = current_context_token_estimate(conversation_id)
+            if context_tokens != sent_context_tokens:
+                sent_context_tokens = context_tokens
+                yield sse(
+                    "context_tokens",
+                    {"message_id": assistant_id, "estimated_tokens": context_tokens},
+                )
 
             if conversation.get("error"):
                 yield sse("error", {"message_id": assistant_id, "error": conversation["error"]})
@@ -659,6 +668,9 @@ def render_chat(request: Request, conversation: dict | None):
             "reasoning_offset": reasoning_offset,
             "answer_offset": answer_offset,
             "tool_count": tool_count,
+            "context_token_estimate": (
+                current_context_token_estimate(conversation["id"]) if conversation else 0
+            ),
         },
     )
 
@@ -1026,6 +1038,27 @@ def build_model_context(conversation_id: str, assistant_message_id: str, system_
         messages.append({"role": "system", "content": system_content})
     messages.extend(store.chat_context(conversation_id, assistant_message_id))
     return messages
+
+
+def current_context_token_estimate(conversation_id: str) -> int:
+    """Estimate the tokens that the next model turn would receive for a conversation."""
+    app_config = app_settings_store.get()
+    messages = build_model_context(conversation_id, "", app_config["system_prompt"])
+    return estimate_message_tokens(messages)
+
+
+def estimate_message_tokens(messages: list[dict]) -> int:
+    """Return a model-agnostic, intentionally approximate token count for API messages."""
+    serialized = json.dumps(messages, ensure_ascii=False, separators=(",", ":"))
+    cjk_pattern = r"[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]"
+    cjk_characters = len(re.findall(cjk_pattern, serialized))
+    remaining = re.sub(cjk_pattern, " ", serialized)
+    units = re.findall(r"[A-Za-z0-9_]+|[^\s]", remaining)
+    non_cjk_tokens = sum(
+        max(1, (len(unit) + 3) // 4) if unit[0].isalnum() or unit[0] == "_" else 1
+        for unit in units
+    )
+    return cjk_characters + non_cjk_tokens
 
 
 def build_system_prompt(system_prompt: str, memories: list[dict]) -> str:

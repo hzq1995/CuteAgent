@@ -1,6 +1,7 @@
 import subprocess
 import time
 from typing import Any
+from uuid import uuid4
 
 from app.agent_tools import ToolContext, truncate
 
@@ -9,7 +10,11 @@ TOOL_DEFINITION = {
     "type": "function",
     "function": {
         "name": "run_bash",
-        "description": "Run a bash command in the CuteHarness workspace and return stdout, stderr, exit code, and timeout status.",
+        "description": (
+            "Run a bash command in the CuteHarness workspace and return stdout, stderr, "
+            "exit code, and timeout status. Set background=true for a long-running command; "
+            "it starts immediately with output written to a log file instead of waiting for it."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -19,6 +24,14 @@ TOOL_DEFINITION = {
                     "description": "Maximum execution time in seconds before the process is killed. Capped by the global tool timeout setting. Default 60.",
                     "default": 60,
                 },
+                "background": {
+                    "type": "boolean",
+                    "description": (
+                        "Start the command as a detached background process. Returns its PID and "
+                        "workspace-relative log file path; stdout and stderr are written to that log."
+                    ),
+                    "default": False,
+                },
             },
             "required": ["command"],
         },
@@ -26,7 +39,15 @@ TOOL_DEFINITION = {
 }
 
 
-def run(context: ToolContext, command: str, timeout_seconds: int = 60) -> dict[str, Any]:
+def run(
+    context: ToolContext,
+    command: str,
+    timeout_seconds: int = 60,
+    background: bool = False,
+) -> dict[str, Any]:
+    if background:
+        return _start_background_process(context, command)
+
     timeout = max(1, min(int(timeout_seconds), context.python_timeout_seconds))
     started_at = time.monotonic()
     process = subprocess.Popen(
@@ -73,3 +94,29 @@ def run(context: ToolContext, command: str, timeout_seconds: int = 60) -> dict[s
             process.kill()
             process.communicate()
         raise
+
+
+def _start_background_process(context: ToolContext, command: str) -> dict[str, Any]:
+    """Start a command without leaving it attached to this tool's output pipes."""
+    logs_dir = context.base_dir / ".cuteharness-logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / f"bash-{uuid4().hex}.log"
+
+    with log_path.open("w", encoding="utf-8") as log_file:
+        process = subprocess.Popen(
+            ["bash", "-lc", command],
+            cwd=context.base_dir,
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            start_new_session=True,
+        )
+
+    return {
+        "background": True,
+        "pid": process.pid,
+        "log_file": str(log_path.relative_to(context.base_dir)),
+    }

@@ -187,7 +187,22 @@ function ensureMessageList(prompt) {
 
   scroller.insertBefore(header, anchor);
   scroller.insertBefore(messageList, anchor);
+  ensureContextTokenEstimate();
   return messageList;
+}
+
+function ensureContextTokenEstimate() {
+  if (document.getElementById("context-token-estimate")) return;
+  const composerWrap = document.querySelector(".composer-wrap");
+  const composer = composerWrap?.querySelector(".composer");
+  if (!composerWrap || !composer) return;
+
+  const estimate = document.createElement("p");
+  estimate.className = "context-token-estimate";
+  estimate.id = "context-token-estimate";
+  estimate.textContent = "上下文：计算中…";
+  composer.insertAdjacentElement("afterend", estimate);
+  composerWrap.classList.add("has-context-token-estimate");
 }
 
 function appendUserMessage(content, attachments = []) {

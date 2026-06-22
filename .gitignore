@@ -1,5 +1,6 @@
 .env
 .tmp
+.cuteharness-logs/
 tests/
 __pycache__/
 *.pyc
