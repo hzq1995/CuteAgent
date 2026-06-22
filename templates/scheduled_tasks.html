@@ -38,10 +38,16 @@
                 <span>计划值</span>
                 <input name="schedule_value" value="{{ editing_task.schedule_value if editing_task else '09:00' }}" required>
               </label>
-              <label class="check-line">
-                <input name="enabled" type="checkbox" {% if not editing_task or editing_task.enabled %}checked{% endif %}>
-                <span>启用</span>
-              </label>
+              <div class="check-group">
+                <label class="check-line">
+                  <input name="enabled" type="checkbox" {% if not editing_task or editing_task.enabled %}checked{% endif %}>
+                  <span>启用</span>
+                </label>
+                <label class="check-line">
+                  <input name="auto_delete" type="checkbox" {% if not editing_task or editing_task.get('auto_delete', True) %}checked{% endif %}>
+                  <span>运行后自动删除</span>
+                </label>
+              </div>
             </div>
             <label>
               <span>任务 Prompt</span>
@@ -62,7 +68,9 @@
                   <h2>{{ task.title }}</h2>
                   <span class="pill {% if task.enabled %}succeeded{% else %}failed{% endif %}">{{ "启用" if task.enabled else "停用" }}</span>
                 </div>
-                <p class="muted">{{ task.schedule_type }} / {{ task.schedule_value }}</p>
+                <p class="muted">{{ task.schedule_type }} / {{ task.schedule_value }}
+                  {%- if task.schedule_type == 'once' and task.get('auto_delete', True) %} · 自动删除{% endif -%}
+                </p>
                 <p>{{ task.prompt }}</p>
                 <dl class="meta-list">
                   <div><dt>下次运行</dt><dd>{{ task.next_run_at or "-" }}</dd></div>

@@ -465,9 +465,10 @@ async def create_scheduled_task(
     schedule_type: str = Form(...),
     schedule_value: str = Form(...),
     enabled: str | None = Form(None),
+    auto_delete: str | None = Form(None),
 ):
     require_login(request)
-    scheduled_task_store.create_task(title, prompt, schedule_type, schedule_value, enabled == "on")
+    scheduled_task_store.create_task(title, prompt, schedule_type, schedule_value, enabled == "on", auto_delete == "on")
     return RedirectResponse("/scheduled-tasks", status_code=303)
 
 
@@ -493,9 +494,10 @@ async def update_scheduled_task(
     schedule_type: str = Form(...),
     schedule_value: str = Form(...),
     enabled: str | None = Form(None),
+    auto_delete: str | None = Form(None),
 ):
     require_login(request)
-    scheduled_task_store.update_task(task_id, title, prompt, schedule_type, schedule_value, enabled == "on")
+    scheduled_task_store.update_task(task_id, title, prompt, schedule_type, schedule_value, enabled == "on", auto_delete == "on")
     return RedirectResponse("/scheduled-tasks", status_code=303)
 
 
@@ -1135,6 +1137,10 @@ async def run_scheduled_task(task: dict) -> None:
             scheduled_task_store.mark_result(task["id"], f"conversation:{conversation['id']} status:failed", str(exc))
         else:
             scheduled_task_store.mark_result(task["id"], "failed before conversation", str(exc))
+
+    # Auto-delete one-time tasks after execution
+    if task.get("schedule_type") == "once" and task.get("auto_delete", True):
+        scheduled_task_store.delete_task(task["id"])
 
 
 def log_scheduled_task_failure(task: asyncio.Task) -> None:

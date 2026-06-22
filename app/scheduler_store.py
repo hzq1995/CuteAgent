@@ -40,6 +40,7 @@ class ScheduledTaskStore:
         schedule_type: str,
         schedule_value: str,
         enabled: bool = True,
+        auto_delete: bool = True,
     ) -> dict[str, Any]:
         now = now_local()
         task = {
@@ -47,6 +48,7 @@ class ScheduledTaskStore:
             "title": title.strip() or title_from_prompt(prompt),
             "prompt": prompt.strip(),
             "enabled": bool(enabled),
+            "auto_delete": bool(auto_delete),
             "schedule_type": schedule_type,
             "schedule_value": schedule_value.strip(),
             "created_at": now.isoformat(),
@@ -71,6 +73,7 @@ class ScheduledTaskStore:
         schedule_type: str,
         schedule_value: str,
         enabled: bool,
+        auto_delete: bool = True,
     ) -> dict[str, Any]:
         with self.lock:
             tasks = self._read()
@@ -80,6 +83,7 @@ class ScheduledTaskStore:
                     "title": title.strip() or title_from_prompt(prompt),
                     "prompt": prompt.strip(),
                     "enabled": bool(enabled),
+                    "auto_delete": bool(auto_delete),
                     "schedule_type": schedule_type,
                     "schedule_value": schedule_value.strip(),
                     "updated_at": now_local().isoformat(),
@@ -171,6 +175,7 @@ def normalize_task(task: dict[str, Any]) -> dict[str, Any]:
     task.setdefault("title", title_from_prompt(task.get("prompt", "")))
     task.setdefault("prompt", "")
     task.setdefault("enabled", True)
+    task.setdefault("auto_delete", True)
     task.setdefault("schedule_type", "once")
     task.setdefault("schedule_value", "")
     task.setdefault("created_at", now)

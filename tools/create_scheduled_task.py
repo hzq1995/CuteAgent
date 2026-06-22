@@ -16,6 +16,7 @@ TOOL_DEFINITION = {
                 "schedule_type": {"type": "string", "enum": ["once", "daily", "interval_minutes"]},
                 "schedule_value": {"type": "string", "description": "once: YYYY-MM-DD HH:mm, daily: HH:mm, interval_minutes: positive integer."},
                 "enabled": {"type": "boolean"},
+                "auto_delete": {"type": "boolean", "description": "Whether to automatically delete the task after it runs (only applies to 'once' type). Defaults to true."},
             },
             "required": ["title", "prompt", "schedule_type", "schedule_value", "enabled"],
         },
@@ -30,5 +31,6 @@ def run(
     schedule_type: str,
     schedule_value: str,
     enabled: bool = True,
+    auto_delete: bool = True,
 ) -> dict[str, Any]:
-    return context.scheduled_tasks.create_task(title, prompt, schedule_type, schedule_value, enabled)
+    return context.scheduled_tasks.create_task(title, prompt, schedule_type, schedule_value, enabled, auto_delete)

@@ -1074,6 +1074,13 @@ button {
   width: auto;
 }
 
+.check-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: end;
+}
+
 .form-actions,
 .task-actions {
   align-items: center;
