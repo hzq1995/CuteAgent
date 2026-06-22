@@ -222,6 +222,15 @@ function addFiles(files) {
 function initComposer() {
   if (!textarea || !form) return;
 
+  // 浏览器从 bfcache 恢复页面时会保留禁用的输入框，但不会保留 SSE 连接。
+  // 重新订阅后，已完成的会话会立即收到 done 事件并恢复发送按钮。
+  window.addEventListener("pageshow", (event) => {
+    if (!event.persisted || !textarea.disabled) return;
+
+    const conversationId = activeConversationId();
+    if (conversationId) startConversationStream(conversationId);
+  });
+
   textarea.addEventListener("input", autoResizeTextarea);
 
   if (fileButton && fileInput) {
