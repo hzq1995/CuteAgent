@@ -425,6 +425,8 @@ def has_running_message(conversation: dict[str, Any]) -> bool:
 def infer_status(messages: list[dict[str, Any]]) -> str:
     if any(message.get("status") == "failed" for message in messages):
         return "failed"
+    if any(message.get("status") == "cancelled" for message in messages):
+        return "cancelled"
     if any(message.get("status") in {"queued", "running"} for message in messages):
         return "running"
     return "succeeded"

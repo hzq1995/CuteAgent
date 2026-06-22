@@ -5,16 +5,42 @@ let attachedFiles = [];
 function setComposerBusy(isBusy) {
   if (!textarea || !button || !form) return;
   textarea.disabled = isBusy;
-  button.disabled = isBusy;
   if (typeof fileInput !== "undefined" && fileInput) fileInput.disabled = isBusy;
   if (typeof fileButton !== "undefined" && fileButton) fileButton.disabled = isBusy;
-  button.textContent = isBusy ? "发送中" : originalButtonText;
+  if (isBusy) {
+    const canStop = Boolean(activeConversationId());
+    button.type = canStop ? "button" : "submit";
+    button.disabled = !canStop;
+    button.classList.toggle("stop-button", canStop);
+    button.textContent = canStop ? "\u505c\u6b62" : "\u53d1\u9001\u4e2d";
+  } else {
+    button.type = "submit";
+    button.disabled = false;
+    button.classList.remove("stop-button");
+    button.textContent = originalButtonText;
+  }
   textarea.placeholder = isBusy ? "等待响应中..." : "发送消息给 CuteHarness";
   form.classList.toggle("disabled", isBusy);
 }
 
 function clearSubmitError() {
   document.querySelectorAll(".composer-error").forEach((item) => item.remove());
+}
+
+function setActiveConversationId(conversationId) {
+  if (form && conversationId) {
+    form.dataset.conversationId = conversationId;
+    if (textarea?.disabled && button) {
+      button.type = "button";
+      button.disabled = false;
+      button.classList.add("stop-button");
+      button.textContent = "\u505c\u6b62";
+    }
+  }
+}
+
+function activeConversationId() {
+  return form?.dataset.conversationId || "";
 }
 
 function showSubmitError(message) {
@@ -57,6 +83,43 @@ async function responseErrorMessage(response) {
   const text = (await response.text().catch(() => "")).trim();
   if (text) return `${text} (${status})`;
   return `Send failed (${status})`;
+}
+
+async function stopCurrentConversation() {
+  const conversationId = activeConversationId();
+  if (!conversationId || !window.fetch) return;
+
+  clearSubmitError();
+  if (button) button.disabled = true;
+
+  try {
+    const response = await fetch(`/conversations/${conversationId}/cancel`, {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+    });
+    if (!response.ok) {
+      throw new Error(await responseErrorMessage(response));
+    }
+
+    const payload = await response.json().catch(() => ({}));
+    if (payload.message_id) {
+      setStatus(payload.message_id, payload.status || "cancelled");
+      collapseReasoning(payload.message_id);
+      document.querySelector(`[data-message-id="${payload.message_id}"] .waiting`)?.remove();
+    }
+    if (currentSource) {
+      currentSource.close();
+      currentSource = null;
+    }
+    setComposerBusy(false);
+    if (textarea) textarea.focus();
+  } catch (error) {
+    showSubmitError(error.message);
+    if (button) button.disabled = false;
+  }
 }
 
 function autoResizeTextarea() {
@@ -166,6 +229,12 @@ function initComposer() {
     fileInput.addEventListener("change", () => addFiles(fileInput.files));
   }
 
+  button?.addEventListener("click", (event) => {
+    if (!textarea.disabled) return;
+    event.preventDefault();
+    stopCurrentConversation();
+  });
+
   textarea.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -216,6 +285,7 @@ function initComposer() {
       replaceAssistantId(pendingId, payload.assistant_message.id);
       setStatus(payload.assistant_message.id, payload.assistant_message.status || "queued");
       form.setAttribute("action", `${payload.conversation_url}/messages`);
+      setActiveConversationId(payload.conversation_id);
 
       if (window.location.pathname !== payload.conversation_url) {
         history.pushState({}, "", payload.conversation_url);

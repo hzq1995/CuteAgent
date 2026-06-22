@@ -61,12 +61,12 @@
             </label>
             <div class="form-row two">
               <label>
-                <span>Python 超时秒数</span>
-                <input name="python_timeout_seconds" type="number" min="1" max="300" value="{{ app_settings.python_timeout_seconds }}">
+                <span>工具超时秒数</span>
+                <input name="python_timeout_seconds" type="number" min="1" max="36000" value="{{ app_settings.python_timeout_seconds }}">
               </label>
               <label>
                 <span>最大工具轮数</span>
-                <input name="max_tool_rounds" type="number" min="1" max="20" value="{{ app_settings.max_tool_rounds }}">
+                <input name="max_tool_rounds" type="number" min="1" max="200" value="{{ app_settings.max_tool_rounds }}">
               </label>
             </div>
             <section class="tool-settings">

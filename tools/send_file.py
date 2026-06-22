@@ -6,7 +6,7 @@ from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
 
-from app.agent_tools import ToolContext
+from app.agent_tools import ToolContext, resolve_workspace_file
 
 
 TOOL_DEFINITION = {
@@ -60,26 +60,6 @@ def run(context: ToolContext, path: str, display_name: str = "") -> dict[str, An
             "is_image": mime_type.startswith("image/"),
         },
     }
-
-
-def resolve_workspace_file(base_dir: Path, raw_path: str) -> Path:
-    if not raw_path or not raw_path.strip():
-        raise ValueError("path is required")
-
-    base = base_dir.resolve()
-    candidate = Path(raw_path).expanduser()
-    if candidate.is_absolute():
-        raise ValueError("path must be relative to the CuteHarness workspace; absolute paths are not allowed")
-    candidate = base / candidate
-    resolved = candidate.resolve()
-
-    if resolved != base and base not in resolved.parents:
-        raise ValueError("Only files inside the CuteHarness workspace can be sent")
-    if not resolved.exists():
-        raise FileNotFoundError(f"File not found: {raw_path}")
-    if not resolved.is_file():
-        raise ValueError(f"Path is not a file: {raw_path}")
-    return resolved
 
 
 def safe_filename(value: str) -> str:

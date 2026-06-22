@@ -69,6 +69,9 @@ function startConversationStream(conversationId, options = {}) {
     if (currentSource === source) {
       currentSource = null;
     }
+    if (payload.message_id && payload.status) {
+      setStatus(payload.message_id, payload.status);
+    }
     collapseReasoning(payload.message_id);
     document.querySelector(`[data-message-id="${payload.message_id}"] .waiting`)?.remove();
     setComposerBusy(false);

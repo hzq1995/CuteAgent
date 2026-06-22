@@ -11,7 +11,7 @@ DEFAULT_APP_SETTINGS = {
     "llm_provider": DEFAULT_PROVIDER,
     "llm_model": DEFAULT_MODEL,
     "system_prompt": "",
-    "python_timeout_seconds": 30,
+    "python_timeout_seconds": 60,
     "max_tool_rounds": 5,
 }
 
@@ -37,8 +37,8 @@ class AppSettingsStore:
         max_tool_rounds: int,
     ) -> dict[str, Any]:
         llm_provider, llm_model = normalize_provider_model(llm_provider, llm_model)
-        python_timeout_seconds = max(1, min(int(python_timeout_seconds), 300))
-        max_tool_rounds = max(1, min(int(max_tool_rounds), 20))
+        python_timeout_seconds = max(1, min(int(python_timeout_seconds), 36000))
+        max_tool_rounds = max(1, min(int(max_tool_rounds), 200))
         values = {
             "llm_provider": llm_provider,
             "llm_model": llm_model,

@@ -1,4 +1,5 @@
 import json
+import threading
 import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -26,6 +27,10 @@ class ToolContext:
     dingtalk_webhook_url: str = ""
     dingtalk_access_token: str = ""
     dingtalk_public_base_url: str = ""
+    cancellation_event: threading.Event | None = None
+
+    def is_cancelled(self) -> bool:
+        return bool(self.cancellation_event and self.cancellation_event.is_set())
 
 
 @dataclass(frozen=True)
@@ -58,6 +63,7 @@ class AgentToolRunner:
         tools_dir: Path = DEFAULT_TOOLS_DIR,
         registry: ToolRegistry | None = None,
         disabled_tools: Iterable[str] | None = None,
+        cancellation_event: threading.Event | None = None,
     ):
         self.context = ToolContext(
             base_dir=base_dir,
@@ -68,6 +74,7 @@ class AgentToolRunner:
             dingtalk_webhook_url=dingtalk_webhook_url,
             dingtalk_access_token=dingtalk_access_token,
             dingtalk_public_base_url=dingtalk_public_base_url,
+            cancellation_event=cancellation_event,
         )
         self.registry = registry or load_tools(tools_dir)
         self.disabled_tools = set(disabled_tools or [])
@@ -81,6 +88,8 @@ class AgentToolRunner:
         ]
 
     def run(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self.context.is_cancelled():
+            return {"ok": False, "error": "Task was cancelled", "cancelled": True}
         tool = self.registry.tools.get(name)
         if tool is None:
             return {"ok": False, "error": f"Unknown tool: {name}"}
@@ -88,6 +97,8 @@ class AgentToolRunner:
             return {"ok": False, "error": f"Tool is disabled: {name}"}
         try:
             result = tool.runner(self.context, **arguments)
+            if self.context.is_cancelled():
+                return {"ok": False, "error": "Task was cancelled", "cancelled": True}
             return {"ok": True, "result": result}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
@@ -163,3 +174,42 @@ def truncate(value: str | bytes | None) -> str:
     if len(value) <= MAX_TOOL_OUTPUT_CHARS:
         return value
     return value[:MAX_TOOL_OUTPUT_CHARS] + "\n...[truncated]"
+
+
+def resolve_workspace_file(base_dir: Path, raw_path: str) -> Path:
+    if not raw_path or not raw_path.strip():
+        raise ValueError("path is required")
+
+    base = base_dir.resolve()
+    candidate = Path(raw_path).expanduser()
+    if candidate.is_absolute():
+        raise ValueError("path must be relative to the CuteHarness workspace; absolute paths are not allowed")
+    candidate = base / candidate
+    resolved = candidate.resolve()
+
+    if resolved != base and base not in resolved.parents:
+        raise ValueError("Only files inside the CuteHarness workspace can be accessed")
+    if not resolved.exists():
+        raise FileNotFoundError(f"File not found: {raw_path}")
+    if not resolved.is_file():
+        raise ValueError(f"Path is not a file: {raw_path}")
+    return resolved
+
+
+def resolve_workspace_path(base_dir: Path, raw_path: str) -> Path:
+    """Like resolve_workspace_file but accepts both files and directories."""
+    if not raw_path or not raw_path.strip():
+        raise ValueError("path is required")
+
+    base = base_dir.resolve()
+    candidate = Path(raw_path).expanduser()
+    if candidate.is_absolute():
+        raise ValueError("path must be relative to the CuteHarness workspace; absolute paths are not allowed")
+    candidate = base / candidate
+    resolved = candidate.resolve()
+
+    if resolved != base and base not in resolved.parents:
+        raise ValueError("Only paths inside the CuteHarness workspace can be accessed")
+    if not resolved.exists():
+        raise FileNotFoundError(f"Path not found: {raw_path}")
+    return resolved

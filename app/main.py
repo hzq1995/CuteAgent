@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+import threading
 import time
 from contextlib import suppress
 from datetime import datetime
@@ -71,6 +72,44 @@ app_settings_store = AppSettingsStore(BASE_DIR / "data" / "settings.json")
 tool_settings_store = ToolSettingsStore(BASE_DIR / "data" / "tool_settings.json")
 memory_store = MemoryStore(BASE_DIR / "data" / "memories.json")
 SKILLS_DIR = BASE_DIR / "skills"
+CANCELLED_STATUS = "cancelled"
+
+
+class ConversationCancelled(Exception):
+    pass
+
+
+class ConversationRunRegistry:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.events: dict[tuple[str, str], threading.Event] = {}
+
+    def start(self, conversation_id: str, message_id: str) -> threading.Event:
+        event = threading.Event()
+        with self.lock:
+            self.events[(conversation_id, message_id)] = event
+        return event
+
+    def cancel(self, conversation_id: str, message_id: str | None = None) -> bool:
+        cancelled = False
+        with self.lock:
+            for (current_conversation_id, current_message_id), event in list(self.events.items()):
+                if current_conversation_id != conversation_id:
+                    continue
+                if message_id and current_message_id != message_id:
+                    continue
+                event.set()
+                cancelled = True
+        return cancelled
+
+    def finish(self, conversation_id: str, message_id: str, event: threading.Event) -> None:
+        with self.lock:
+            key = (conversation_id, message_id)
+            if self.events.get(key) is event:
+                self.events.pop(key, None)
+
+
+running_conversations = ConversationRunRegistry()
 
 
 def require_login(request: Request) -> None:
@@ -218,6 +257,29 @@ async def append_message(
     return RedirectResponse(f"/conversations/{conversation_id}", status_code=303)
 
 
+@app.post("/conversations/{conversation_id}/cancel")
+async def cancel_conversation(conversation_id: str, request: Request):
+    require_login(request)
+    conversation = store.get_conversation(conversation_id)
+    if not conversation:
+        return JSONResponse({"error": "Conversation not found"}, status_code=404)
+
+    assistant = latest_assistant(conversation)
+    if not assistant or assistant.get("status") not in {"queued", "running"}:
+        return JSONResponse({"error": "Conversation has no running message"}, status_code=409)
+
+    running_conversations.cancel(conversation_id, assistant["id"])
+    store.update_message(conversation_id, assistant["id"], status=CANCELLED_STATUS)
+    store.update_conversation(conversation_id, status=CANCELLED_STATUS, error="")
+    return JSONResponse(
+        {
+            "conversation_id": conversation_id,
+            "message_id": assistant["id"],
+            "status": CANCELLED_STATUS,
+        }
+    )
+
+
 @app.get("/conversations/{conversation_id}/stream")
 async def conversation_stream(
     conversation_id: str,
@@ -293,6 +355,9 @@ async def conversation_stream(
 
             if assistant["status"] == "failed":
                 yield sse("done", {"status": "failed", "message_id": assistant_id})
+                break
+            if assistant["status"] == CANCELLED_STATUS:
+                yield sse("done", {"status": CANCELLED_STATUS, "message_id": assistant_id})
                 break
             if assistant["status"] == "succeeded":
                 yield sse("done", {"status": "succeeded", "message_id": assistant_id})
@@ -574,6 +639,11 @@ async def task_stream_compat(task_id: str, request: Request, _: None = Depends(r
     return await conversation_stream(task_id, request)
 
 
+@app.post("/tasks/{task_id}/cancel")
+async def task_cancel_compat(task_id: str, request: Request):
+    return await cancel_conversation(task_id, request)
+
+
 def render_chat(request: Request, conversation: dict | None):
     active_assistant = latest_assistant(conversation) if conversation else None
     reasoning_offset = len(active_assistant.get("reasoning_content", "")) if active_assistant else 0
@@ -826,11 +896,25 @@ def unique_filename(filename: str, used_names: set[str], target_dir: Path) -> st
     return candidate
 
 
+def ensure_not_cancelled(conversation_id: str, assistant_message_id: str, cancel_event: threading.Event) -> None:
+    if cancel_event.is_set():
+        raise ConversationCancelled()
+    conversation = store.get_conversation(conversation_id)
+    if not conversation:
+        return
+    for message in conversation["messages"]:
+        if message["id"] == assistant_message_id and message.get("status") == CANCELLED_STATUS:
+            cancel_event.set()
+            raise ConversationCancelled()
+
+
 def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> None:
-    store.update_conversation(conversation_id, status="running", error="")
-    store.update_message(conversation_id, assistant_message_id, status="running")
+    cancel_event = running_conversations.start(conversation_id, assistant_message_id)
 
     try:
+        ensure_not_cancelled(conversation_id, assistant_message_id, cancel_event)
+        store.update_conversation(conversation_id, status="running", error="")
+        store.update_message(conversation_id, assistant_message_id, status="running")
         app_config = app_settings_store.get()
         client = create_llm_client(app_config)
         tool_runner = AgentToolRunner(
@@ -843,16 +927,19 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
             dingtalk_access_token=settings.dingtalk_access_token,
             dingtalk_public_base_url=settings.dingtalk_public_base_url,
             disabled_tools=tool_settings_store.disabled_tools(),
+            cancellation_event=cancel_event,
         )
         messages = build_model_context(conversation_id, assistant_message_id, app_config["system_prompt"])
         max_tool_rounds = app_config["max_tool_rounds"]
         tool_rounds = 0
 
         while True:
+            ensure_not_cancelled(conversation_id, assistant_message_id, cancel_event)
             requested_tools = False
             assistant_protocol_reasoning = ""
             assistant_protocol_content = ""
             for event in client.stream_agent_turn(messages, tool_runner.definitions):
+                ensure_not_cancelled(conversation_id, assistant_message_id, cancel_event)
                 if event["type"] == "reasoning":
                     assistant_protocol_reasoning += event["delta"]
                     store.append_reasoning(conversation_id, assistant_message_id, event["delta"])
@@ -875,9 +962,12 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
                     messages.append(assistant_message)
                     store.append_api_message(conversation_id, assistant_message_id, assistant_message)
                     for tool_call in tool_calls:
+                        ensure_not_cancelled(conversation_id, assistant_message_id, cancel_event)
                         function = tool_call["function"]
                         arguments = parse_tool_arguments(function.get("arguments", ""))
                         result = tool_runner.run(function["name"], arguments)
+                        if result.get("cancelled"):
+                            raise ConversationCancelled()
                         store.append_tool_message(
                             conversation_id=conversation_id,
                             assistant_message_id=assistant_message_id,
@@ -898,6 +988,7 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
                     break
 
             if not requested_tools:
+                ensure_not_cancelled(conversation_id, assistant_message_id, cancel_event)
                 if assistant_protocol_content or assistant_protocol_reasoning:
                     store.append_api_message(
                         conversation_id,
@@ -910,11 +1001,22 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
                     )
                 break
 
+        ensure_not_cancelled(conversation_id, assistant_message_id, cancel_event)
         store.update_message(conversation_id, assistant_message_id, status="succeeded")
         store.update_conversation(conversation_id, status="succeeded", error="")
+    except ConversationCancelled:
+        store.update_message(conversation_id, assistant_message_id, status=CANCELLED_STATUS)
+        store.update_conversation(conversation_id, status=CANCELLED_STATUS, error="")
     except Exception as exc:
-        store.update_message(conversation_id, assistant_message_id, status="failed")
-        store.update_conversation(conversation_id, status="failed", error=str(exc))
+        conversation = store.get_conversation(conversation_id)
+        assistant = latest_assistant(conversation)
+        if assistant and assistant.get("id") == assistant_message_id and assistant.get("status") == CANCELLED_STATUS:
+            store.update_conversation(conversation_id, status=CANCELLED_STATUS, error="")
+        else:
+            store.update_message(conversation_id, assistant_message_id, status="failed")
+            store.update_conversation(conversation_id, status="failed", error=str(exc))
+    finally:
+        running_conversations.finish(conversation_id, assistant_message_id, cancel_event)
 
 
 def build_model_context(conversation_id: str, assistant_message_id: str, system_prompt: str) -> list[dict]:

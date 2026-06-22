@@ -150,6 +150,7 @@
             method="post"
             action="{% if conversation %}/conversations/{{ conversation.id }}/messages{% else %}/conversations{% endif %}"
             enctype="multipart/form-data"
+            data-conversation-id="{% if conversation %}{{ conversation.id }}{% endif %}"
           >
             <div class="composer-main">
               <div class="selected-files" id="selected-files" aria-live="polite"></div>
@@ -163,7 +164,7 @@
             <div class="composer-actions">
               <input id="composer-files" name="files" type="file" multiple {% if is_running %}disabled{% endif %}>
               <button class="file-button" type="button" aria-label="Attach files" title="Attach files" {% if is_running %}disabled{% endif %}>+</button>
-            <button type="submit" {% if is_running %}disabled{% endif %}>发送</button>
+              <button class="action-button{% if is_running %} stop-button{% endif %}" type="{% if is_running %}button{% else %}submit{% endif %}">{% if is_running %}&#20572;&#27490;{% else %}&#21457;&#36865;{% endif %}</button>
             </div>
           </form>
         </section>
@@ -179,7 +180,7 @@
       // 全局 DOM 引用（供各模块访问）
       const form = document.querySelector(".composer");
       const textarea = document.querySelector(".composer textarea");
-      const button = document.querySelector(".composer button[type='submit']");
+      const button = document.querySelector(".composer .action-button");
       const fileInput = document.getElementById("composer-files");
       const fileButton = document.querySelector(".composer .file-button");
       const selectedFiles = document.getElementById("selected-files");

@@ -245,6 +245,8 @@ button {
 
 .conversation-status.failed,
 .message-status.failed,
+.conversation-status.cancelled,
+.message-status.cancelled,
 .error {
   color: var(--warn);
 }
@@ -819,6 +821,17 @@ button {
 
 .composer .file-button:hover {
   border-color: var(--accent);
+}
+
+.composer .stop-button {
+  background: var(--warn);
+  border-color: var(--warn);
+  color: #ffffff;
+}
+
+.composer .stop-button:hover {
+  background: #8d3326;
+  border-color: #8d3326;
 }
 
 .selected-files {

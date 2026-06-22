@@ -58,6 +58,9 @@ Built-in tools:
 
 - `run_python`: runs local Python code with a timeout.
 - `run_bash`: runs `bash -lc <command>` in the workspace with a timeout.
+- `edit_file`: edits an existing workspace file by replacing an exact string (unique match or `replace_all`).
+- `grep`: searches workspace file contents with a regex; returns matching files, matching lines with line numbers, or per-file counts.
+- `send_file`: sends a workspace file to the web page (inline image or download link).
 - `list_scheduled_tasks`: lists CuteHarness application scheduled tasks.
 - `create_scheduled_task`: creates an application scheduled task.
 - `delete_scheduled_task`: deletes an application scheduled task.
