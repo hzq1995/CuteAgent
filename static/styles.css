@@ -1003,6 +1003,63 @@ button {
   padding: 4px 7px;
 }
 
+.settings-section-head.compact h2 {
+  font-size: 16px;
+}
+
+.custom-model-panel {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 14px;
+  padding-top: 16px;
+}
+
+.inline-actions {
+  justify-content: flex-start;
+}
+
+.custom-model-list {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.custom-model-row {
+  align-items: center;
+  background: #fffaf1;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 12px;
+}
+
+.custom-model-row + .custom-model-row {
+  border-top: 1px solid var(--line);
+}
+
+.custom-model-row div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.custom-model-row strong,
+.custom-model-row span,
+.custom-model-row code {
+  overflow-wrap: anywhere;
+}
+
+.custom-model-row span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.custom-model-row code {
+  color: #4c4740;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
 .tool-toggle-list {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1099,6 +1156,10 @@ button {
 
 .success-note {
   color: var(--success);
+}
+
+.error-note {
+  color: var(--warn);
 }
 
 .task-grid {

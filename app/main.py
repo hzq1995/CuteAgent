@@ -19,7 +19,7 @@ from app.agent_tools import AgentToolRunner, load_tools, parse_tool_arguments
 from app.app_settings import AppSettingsStore
 from app.config import BASE_DIR, get_settings
 from app.llm_client import OpenAICompatibleClient
-from app.llm_config import MIMO_PROVIDER, provider_options, request_options_for_provider
+from app.llm_config import MIMO_PROVIDER, custom_model_by_provider, provider_options, request_options_for_provider
 from app.memory_store import MemoryStore
 from app.scheduler_store import ScheduledTaskStore
 from app.storage import TaskStore
@@ -614,6 +614,43 @@ async def update_settings(
     )
 
 
+@app.post("/settings/custom-models", response_class=HTMLResponse)
+async def add_custom_model(
+    request: Request,
+    custom_model_name: str = Form(""),
+    custom_model_base_url: str = Form(""),
+    custom_model_model: str = Form(""),
+    custom_model_api_key: str = Form(""),
+):
+    require_login(request)
+    try:
+        values = app_settings_store.add_custom_model(
+            custom_model_name,
+            custom_model_base_url,
+            custom_model_model,
+            custom_model_api_key,
+        )
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            "settings.html",
+            base_context(request, active_page="settings")
+            | settings_context(app_settings=app_settings_store.get(), saved=False, error=str(exc)),
+            status_code=400,
+        )
+    return templates.TemplateResponse(
+        "settings.html",
+        base_context(request, active_page="settings")
+        | settings_context(app_settings=values, saved=True),
+    )
+
+
+@app.post("/settings/custom-models/{model_id}/delete")
+async def delete_custom_model(model_id: str, request: Request):
+    require_login(request)
+    app_settings_store.delete_custom_model(model_id)
+    return RedirectResponse("/settings", status_code=303)
+
+
 @app.post("/memories/{memory_id}")
 async def update_memory(memory_id: str, request: Request, content: str = Form("")):
     require_login(request)
@@ -690,7 +727,9 @@ def settings_context(
     app_settings: dict | None = None,
     registry=None,
     saved: bool,
+    error: str = "",
 ) -> dict:
+    app_settings = app_settings or app_settings_store.get()
     registry = registry or load_tools()
     disabled_tools = tool_settings_store.disabled_tools()
     tools = []
@@ -708,12 +747,13 @@ def settings_context(
             }
         )
     return {
-        "app_settings": app_settings or app_settings_store.get(),
-        "llm_providers": provider_options(),
+        "app_settings": app_settings,
+        "llm_providers": provider_options(app_settings.get("custom_models", [])),
         "tool_settings": {"disabled_tools": sorted(disabled_tools)},
         "tools": tools,
         "memories": memory_store.list_memories(),
         "saved": saved,
+        "error": error,
     }
 
 
@@ -1076,7 +1116,12 @@ def build_system_prompt(system_prompt: str, memories: list[dict]) -> str:
 def create_llm_client(app_config: dict) -> OpenAICompatibleClient:
     provider = app_config["llm_provider"]
     model = app_config["llm_model"] or settings.deepseek_model
-    if provider == MIMO_PROVIDER:
+    custom_model = custom_model_by_provider(provider, app_config.get("custom_models", []))
+    if custom_model:
+        api_key = custom_model["api_key"]
+        base_url = custom_model["base_url"]
+        model = custom_model["model"]
+    elif provider == MIMO_PROVIDER:
         api_key = settings.mimo_api_key
         base_url = settings.mimo_base_url
     else:

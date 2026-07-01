@@ -49,8 +49,8 @@ PROVIDER_PRESETS: dict[str, ProviderPreset] = {
 }
 
 
-def provider_options() -> list[dict[str, Any]]:
-    return [
+def provider_options(custom_models: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    options = [
         {
             "id": preset.id,
             "label": preset.label,
@@ -59,14 +59,50 @@ def provider_options() -> list[dict[str, Any]]:
         }
         for preset in PROVIDER_PRESETS.values()
     ]
+    for custom_model in custom_models or []:
+        provider_id = str(custom_model.get("id") or "")
+        model = str(custom_model.get("model") or "")
+        if not provider_id or not model:
+            continue
+        label = str(custom_model.get("name") or model)
+        options.append(
+            {
+                "id": provider_id,
+                "label": label,
+                "models": [{"id": model, "label": model}],
+                "default_model": model,
+                "custom": True,
+            }
+        )
+    return options
 
 
-def normalize_provider_model(provider: str, model: str) -> tuple[str, str]:
+def normalize_provider_model(
+    provider: str,
+    model: str,
+    custom_models: list[dict[str, Any]] | None = None,
+) -> tuple[str, str]:
     provider_id = provider if provider in PROVIDER_PRESETS else DEFAULT_PROVIDER
+    if provider_id == DEFAULT_PROVIDER:
+        for custom_model in custom_models or []:
+            custom_id = str(custom_model.get("id") or "")
+            custom_model_name = str(custom_model.get("model") or "")
+            if provider == custom_id and custom_model_name:
+                return custom_id, custom_model_name
     preset = PROVIDER_PRESETS[provider_id]
     valid_models = {option.id for option in preset.models}
     model_id = model if model in valid_models else preset.default_model
     return provider_id, model_id
+
+
+def custom_model_by_provider(
+    provider: str,
+    custom_models: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    for custom_model in custom_models or []:
+        if str(custom_model.get("id") or "") == provider:
+            return custom_model
+    return None
 
 
 def request_options_for_provider(provider: str) -> dict[str, Any]:
