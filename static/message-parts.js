@@ -127,6 +127,72 @@ function appendToolMessage(messageId, message) {
   scheduleScrollToBottom();
 }
 
+function syncAssistantSnapshot(messageId, message) {
+  const parts = assistantParts(messageId);
+  if (!parts || !message) return;
+
+  parts.replaceChildren();
+  for (const toolCall of message.tool_calls || []) {
+    const toolCallId = toolCall.id || "";
+    if (!findToolCallCard(parts, toolCallId)) {
+      appendToolCall(messageId, {
+        tool_call_id: toolCallId,
+        name: toolCall.function?.name || "tool",
+        arguments: formatToolValue(toolCall.function?.arguments || "{}"),
+      });
+    }
+  }
+
+  for (const part of message.parts || []) {
+    if (part.type === "reasoning") {
+      const item = document.createElement("details");
+      item.className = "reasoning";
+      item.open = message.status === "queued" || message.status === "running";
+      item.dataset.partType = "reasoning";
+      item.innerHTML = "<summary>Thinking</summary><pre></pre>";
+      item.querySelector("pre").textContent = part.content || "";
+      parts.appendChild(item);
+      continue;
+    }
+
+    if (part.type === "answer") {
+      const item = document.createElement("div");
+      item.className = "answer markdown-body";
+      item.dataset.partType = "answer";
+      item.dataset.raw = part.content || "";
+      parts.appendChild(item);
+      renderAnswer(item);
+      continue;
+    }
+
+    if (part.type === "tool") {
+      appendToolMessage(messageId, {
+        tool_call_id: part.tool_message_id,
+        name: part.name,
+        status: part.status,
+        result: part.result,
+      });
+    }
+  }
+
+  for (const toolMessage of message.tool_messages || []) {
+    appendToolMessage(messageId, toolMessage);
+  }
+
+  if (!parts.querySelector(".answer") && message.content) {
+    const item = document.createElement("div");
+    item.className = "answer markdown-body";
+    item.dataset.partType = "answer";
+    item.dataset.raw = message.content;
+    parts.appendChild(item);
+    renderAnswer(item);
+  }
+
+  deduplicateAssistantAnswers(parts);
+  parts.querySelectorAll(".answer").forEach(renderAnswer);
+  scheduleScrollToBottom();
+}
+
 function transferredFileFromToolResult(result) {
   if (!result || result.ok !== true || !result.result) return null;
   return result.result.type === "transferred_file" ? result.result : null;

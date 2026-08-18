@@ -302,6 +302,7 @@ async def conversation_stream(
         sent_tool_call_count = 0
         sent_status = ""
         sent_context_tokens: int | None = None
+        sent_snapshot = False
 
         while True:
             if await request.is_disconnected():
@@ -323,6 +324,7 @@ async def conversation_stream(
                     sent_answer_len = 0
                     sent_tool_count = 0
                     sent_tool_call_count = 0
+                    sent_snapshot = False
                 assistant_id = assistant["id"]
                 sent_status = ""
                 yield sse("assistant", {"message_id": assistant_id})
@@ -337,6 +339,30 @@ async def conversation_stream(
                         "status": sent_status,
                     },
                 )
+
+            # 每条连接先同步一次完整消息状态，再从这个状态点继续发送增量。
+            # 这样断线重连时不会依赖客户端猜测工具/文本事件是否已经收全。
+            if not sent_snapshot:
+                tools = current_tool_messages(conversation, assistant_id)
+                yield sse(
+                    "snapshot",
+                    {
+                        "message_id": assistant_id,
+                        "message": {
+                            "status": assistant.get("status", ""),
+                            "content": assistant.get("content", "") or "",
+                            "reasoning_content": assistant.get("reasoning_content", "") or "",
+                            "parts": assistant.get("parts") or [],
+                            "tool_calls": assistant.get("tool_calls") or [],
+                            "tool_messages": tools,
+                        },
+                    },
+                )
+                sent_reasoning_len = len(assistant.get("reasoning_content") or "")
+                sent_answer_len = len(assistant.get("content") or "")
+                sent_tool_count = len(tools)
+                sent_tool_call_count = len(assistant.get("tool_calls") or [])
+                sent_snapshot = True
 
             reasoning = assistant.get("reasoning_content") or ""
             if len(reasoning) > sent_reasoning_len:
@@ -405,8 +431,19 @@ async def conversation_stream(
                 break
 
             await asyncio.sleep(0.7)
+            # Keep reverse proxies from buffering or timing out an otherwise
+            # quiet SSE connection while the model is still working.
+            yield ": keep-alive\n\n"
 
-    return StreamingResponse(events(), media_type="text/event-stream")
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/files/{file_id}/{filename}")
