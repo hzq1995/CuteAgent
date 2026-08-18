@@ -52,6 +52,22 @@
                         <span class="message-status {{ message.status }}">{{ message.status }}</span>
                       </div>
                       <div class="assistant-parts" id="parts-{{ message.id }}">
+                        {% if message.tool_calls %}
+                          {% for tool_call in message.tool_calls %}
+                            <article class="message tool-message inline-tool-message tool-call-message" data-part-type="tool-call" data-tool-call-id="{{ tool_call.id }}">
+                              <div class="tool-card">
+                                <div class="tool-card-header">
+                                  <span>工具调用 · {{ tool_call.function.name }}</span>
+                                  <span class="message-status succeeded">已发出</span>
+                                </div>
+                                <details open>
+                                  <summary>调用参数</summary>
+                                  <pre>{{ tool_call.function.arguments }}</pre>
+                                </details>
+                              </div>
+                            </article>
+                          {% endfor %}
+                        {% endif %}
                         {% if message.parts %}
                           {% for part in message.parts %}
                             {% if part.type == "reasoning" %}
@@ -62,10 +78,10 @@
                             {% elif part.type == "answer" %}
                               <div class="answer markdown-body">{{ part.content }}</div>
                             {% elif part.type == "tool" %}
-                              <article class="message tool-message inline-tool-message">
+                              <article class="message tool-message inline-tool-message tool-result-message" data-part-type="tool-result" data-tool-call-id="{{ part.tool_message_id }}">
                                 <div class="tool-card">
                                   <div class="tool-card-header">
-                                    <span>{{ part.name }}</span>
+                                    <span>工具返回 · {{ part.name }}</span>
                                     <span class="message-status {{ part.status }}">{{ part.status }}</span>
                                   </div>
                                   {% set transfer = part.result.result if part.result and part.result.ok and part.result.result and part.result.result.type == "transferred_file" else none %}
@@ -84,8 +100,8 @@
                                     </div>
                                   {% endif %}
                                   <details>
-                                    <summary>Tool arguments and result</summary>
-                                    <pre>{{ {"arguments": part.arguments, "result": part.result} | tojson(indent=2) }}</pre>
+                                    <summary>查看返回结果</summary>
+                                    <pre>{{ part.result | tojson(indent=2) }}</pre>
                                   </details>
                                 </div>
                               </article>
@@ -104,10 +120,10 @@
                     </div>
                   </article>
                 {% elif message.role == "tool" and not message.inline_rendered %}
-                  <article class="message tool-message">
+                  <article class="message tool-message tool-result-message" data-part-type="tool-result" data-tool-call-id="{{ message.tool_call_id }}">
                     <div class="tool-card">
                       <div class="tool-card-header">
-                        <span>{{ message.name }}</span>
+                        <span>工具返回 · {{ message.name }}</span>
                         <span class="message-status {{ message.status }}">{{ message.status }}</span>
                       </div>
                       {% set transfer = message.result.result if message.result and message.result.ok and message.result.result and message.result.result.type == "transferred_file" else none %}
@@ -126,8 +142,8 @@
                         </div>
                       {% endif %}
                       <details>
-                        <summary>查看工具参数和结果</summary>
-                        <pre>{{ {"arguments": message.arguments, "result": message.result} | tojson(indent=2) }}</pre>
+                        <summary>查看返回结果</summary>
+                        <pre>{{ message.result | tojson(indent=2) }}</pre>
                       </details>
                     </div>
                   </article>
@@ -198,8 +214,12 @@
             child.dataset.partType = "reasoning";
           } else if (child.classList.contains("answer")) {
             child.dataset.partType = "answer";
+          } else if (child.classList.contains("tool-call-message")) {
+            child.dataset.partType = "tool-call";
+          } else if (child.classList.contains("tool-result-message")) {
+            child.dataset.partType = "tool-result";
           } else if (child.classList.contains("tool-message")) {
-            child.dataset.partType = "tool";
+            child.dataset.partType = "tool-result";
           }
         }
       });

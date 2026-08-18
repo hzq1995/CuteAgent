@@ -58,9 +58,12 @@ Built-in tools:
 
 - `run_python`: runs local Python code with a timeout.
 - `run_bash`: runs `bash -lc <command>` in the workspace with a timeout. Pass `background: true` for long-running commands; it returns immediately with a PID and a log file under `.cuteharness-logs/`.
+- `read_file`: reads a workspace text file, optionally restricted to a line range.
+- `apply_patch`: applies a structured multi-file patch inside the workspace.
 - `edit_file`: edits an existing workspace file by replacing an exact string (unique match or `replace_all`).
 - `grep`: searches workspace file contents with a regex; returns matching files, matching lines with line numbers, or per-file counts.
 - `send_file`: sends a workspace file to the web page (inline image or download link).
+- `view_images`: analyzes up to 8 workspace images with MiMo V2.5. Image paths must come from uploaded files; the tool reads them locally and sends Base64 image data to MiMo.
 - `list_scheduled_tasks`: lists CuteHarness application scheduled tasks.
 - `create_scheduled_task`: creates an application scheduled task.
 - `delete_scheduled_task`: deletes an application scheduled task.
@@ -72,7 +75,11 @@ Built-in tools:
 - `list_conversations`: lists recent conversation history.
 - `get_conversation`: reads a conversation by id.
 
+Scheduled task schedules support `once`, `interval`, and five-field `cron` expressions. Examples include `30m` for a thirty-minute interval and `0 9 * * 1-5` for 09:00 every weekday. Existing `daily` and `interval_minutes` tasks remain compatible. Schedules use `Asia/Shanghai` by default and executions missed while the application is stopped are skipped rather than replayed after restart.
+
 DingTalk is no longer pushed automatically after every reply. The Agent sends DingTalk messages only when it calls `send_dingtalk_message`.
+
+When the chat input is focused, paste an image with Ctrl+V to add it as an attachment. Pasted images use the same upload path and can be removed from the composer before sending.
 
 ## Skills
 

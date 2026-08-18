@@ -1,3 +1,4 @@
+import os
 import subprocess
 import time
 from typing import Any
@@ -50,6 +51,9 @@ def run(
 
     timeout = max(1, min(int(timeout_seconds), context.python_timeout_seconds))
     started_at = time.monotonic()
+    environment = os.environ.copy()
+    environment["PYTHONIOENCODING"] = "utf-8"
+    environment["PYTHONUTF8"] = "1"
     process = subprocess.Popen(
         ["bash", "-lc", command],
         cwd=context.base_dir,
@@ -58,6 +62,7 @@ def run(
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=environment,
     )
     try:
         while process.poll() is None:
@@ -103,6 +108,9 @@ def _start_background_process(context: ToolContext, command: str) -> dict[str, A
     log_path = logs_dir / f"bash-{uuid4().hex}.log"
 
     with log_path.open("w", encoding="utf-8") as log_file:
+        environment = os.environ.copy()
+        environment["PYTHONIOENCODING"] = "utf-8"
+        environment["PYTHONUTF8"] = "1"
         process = subprocess.Popen(
             ["bash", "-lc", command],
             cwd=context.base_dir,
@@ -112,6 +120,7 @@ def _start_background_process(context: ToolContext, command: str) -> dict[str, A
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=environment,
             start_new_session=True,
         )
 

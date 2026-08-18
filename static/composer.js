@@ -1,6 +1,8 @@
 // composer.js - input, attachments, form submit, and error handling
 
 let attachedFiles = [];
+const MAX_IMAGE_ATTACHMENTS = 8;
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
 function setComposerBusy(isBusy) {
   if (!textarea || !button || !form) return;
@@ -169,6 +171,7 @@ function renderAttachedFiles() {
     row.className = "selected-file";
 
     if (item.previewUrl) {
+      row.classList.add("selected-image");
       const image = document.createElement("img");
       image.className = "selected-file-preview";
       image.src = item.previewUrl;
@@ -197,7 +200,7 @@ function renderAttachedFiles() {
     remove.type = "button";
     remove.title = "Remove file";
     remove.setAttribute("aria-label", `Remove ${item.file.name}`);
-    remove.textContent = "x";
+    remove.textContent = "×";
     remove.addEventListener("click", () => {
       const [removed] = attachedFiles.splice(index, 1);
       if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
@@ -210,7 +213,26 @@ function renderAttachedFiles() {
 }
 
 function addFiles(files) {
-  Array.from(files || []).forEach((file) => {
+  const incoming = Array.from(files || []);
+  const currentImageCount = attachedFiles.filter((item) => item.file.type?.startsWith("image/")).length;
+  let imageCount = currentImageCount;
+  const accepted = [];
+
+  incoming.forEach((file) => {
+    const isImage = file.type?.startsWith("image/");
+    if (isImage && file.size > MAX_IMAGE_BYTES) {
+      showSubmitError(`图片 ${file.name || "未命名图片"} 超过 20 MB 限制`);
+      return;
+    }
+    if (isImage && imageCount >= MAX_IMAGE_ATTACHMENTS) {
+      showSubmitError(`最多同时添加 ${MAX_IMAGE_ATTACHMENTS} 张图片`);
+      return;
+    }
+    if (isImage) imageCount += 1;
+    accepted.push(file);
+  });
+
+  accepted.forEach((file) => {
     attachedFiles.push({
       file,
       previewUrl: file.type && file.type.startsWith("image/") ? URL.createObjectURL(file) : "",
@@ -218,6 +240,23 @@ function addFiles(files) {
   });
   if (fileInput) fileInput.value = "";
   renderAttachedFiles();
+}
+
+function clipboardImageFiles(event) {
+  const items = Array.from(event.clipboardData?.items || []);
+  return items
+    .filter((item) => item.kind === "file" && item.type?.startsWith("image/"))
+    .map((item, index) => {
+      const file = item.getAsFile();
+      if (!file) return null;
+      if (file.name) return file;
+      const extension = file.type.split("/")[1] || "png";
+      return new File([file], `pasted-image-${Date.now()}-${index}.${extension}`, {
+        type: file.type || "image/png",
+        lastModified: Date.now(),
+      });
+    })
+    .filter(Boolean);
 }
 
 function initComposer() {
@@ -233,6 +272,12 @@ function initComposer() {
   });
 
   textarea.addEventListener("input", autoResizeTextarea);
+  textarea.addEventListener("paste", (event) => {
+    const images = clipboardImageFiles(event);
+    if (!images.length) return;
+    event.preventDefault();
+    addFiles(images);
+  });
 
   if (fileButton && fileInput) {
     fileButton.addEventListener("click", () => fileInput.click());

@@ -28,6 +28,8 @@ class ToolContext:
     dingtalk_access_token: str = ""
     dingtalk_public_base_url: str = ""
     cancellation_event: threading.Event | None = None
+    mimo_api_key: str = ""
+    mimo_base_url: str = "https://api.xiaomimimo.com/v1"
 
     def is_cancelled(self) -> bool:
         return bool(self.cancellation_event and self.cancellation_event.is_set())
@@ -64,6 +66,8 @@ class AgentToolRunner:
         registry: ToolRegistry | None = None,
         disabled_tools: Iterable[str] | None = None,
         cancellation_event: threading.Event | None = None,
+        mimo_api_key: str = "",
+        mimo_base_url: str = "https://api.xiaomimimo.com/v1",
     ):
         self.context = ToolContext(
             base_dir=base_dir,
@@ -74,6 +78,8 @@ class AgentToolRunner:
             dingtalk_webhook_url=dingtalk_webhook_url,
             dingtalk_access_token=dingtalk_access_token,
             dingtalk_public_base_url=dingtalk_public_base_url,
+            mimo_api_key=mimo_api_key,
+            mimo_base_url=mimo_base_url,
             cancellation_event=cancellation_event,
         )
         self.registry = registry or load_tools(tools_dir)

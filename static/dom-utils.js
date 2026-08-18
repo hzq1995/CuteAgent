@@ -7,18 +7,98 @@ function renderAnswer(target) {
   if (target.dataset.raw === undefined) {
     target.dataset.raw = target.textContent;
   }
-  target.innerHTML = renderMarkdown(target.dataset.raw);
+  const raw = target.dataset.raw;
+  if (target.dataset.renderedRaw === raw) return;
+
+  patchAnswerDom(target, renderMarkdown(raw));
+  target.dataset.renderedRaw = raw;
+}
+
+function patchAnswerDom(target, html) {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+
+  const currentScroller = chatScroller();
+  const shouldPreserveScroll = currentScroller && !isChatNearBottom(currentScroller);
+  const scrollTop = currentScroller?.scrollTop || 0;
+
+  const nextChildren = Array.from(template.content.children);
+  for (let index = 0; index < nextChildren.length; index += 1) {
+    const nextChild = nextChildren[index];
+    const currentChild = target.children[index];
+
+    if (!currentChild || !canReuseAnswerBlock(currentChild, nextChild)) {
+      target.insertBefore(nextChild, currentChild || null);
+      continue;
+    }
+
+    if (nextChild.classList.contains("table-scroll")) {
+      patchTableBlock(currentChild, nextChild);
+    } else if (currentChild.outerHTML !== nextChild.outerHTML) {
+      // 普通段落/列表只替换发生变化的块，不触碰已经完成的表格节点。
+      currentChild.replaceWith(nextChild);
+    }
+  }
+
+  while (target.children.length > nextChildren.length) {
+    target.lastElementChild.remove();
+  }
+
+  if (shouldPreserveScroll && currentScroller) {
+    currentScroller.scrollTop = scrollTop;
+  }
+}
+
+function canReuseAnswerBlock(current, next) {
+  return current.nodeName === next.nodeName && current.className === next.className;
+}
+
+function patchTableBlock(currentBlock, nextBlock) {
+  const currentTable = currentBlock.querySelector("table");
+  const nextTable = nextBlock.querySelector("table");
+  if (!currentTable || !nextTable) {
+    currentBlock.replaceWith(nextBlock);
+    return;
+  }
+
+  patchTableSection(currentTable.tHead, nextTable.tHead);
+  patchTableSection(currentTable.tBodies[0], nextTable.tBodies[0]);
+}
+
+function patchTableSection(currentSection, nextSection) {
+  if (!currentSection || !nextSection) return;
+
+  const nextRows = Array.from(nextSection.rows);
+  for (let index = 0; index < nextRows.length; index += 1) {
+    const nextRow = nextRows[index];
+    const currentRow = currentSection.rows[index];
+    if (!currentRow) {
+      currentSection.appendChild(nextRow);
+      continue;
+    }
+    if (currentRow.cells.length !== nextRow.cells.length) {
+      currentRow.replaceWith(nextRow);
+      continue;
+    }
+
+    for (let cellIndex = 0; cellIndex < nextRow.cells.length; cellIndex += 1) {
+      const currentCell = currentRow.cells[cellIndex];
+      const nextCell = nextRow.cells[cellIndex];
+      if (currentCell.innerHTML !== nextCell.innerHTML) {
+        currentCell.innerHTML = nextCell.innerHTML;
+      }
+    }
+  }
+
+  while (currentSection.rows.length > nextRows.length) {
+    currentSection.lastElementChild.remove();
+  }
 }
 
 const CHAT_BOTTOM_THRESHOLD = 80;
-const CHAT_SCROLL_SNAP_THRESHOLD = 2;
-const CHAT_SCROLL_MAX_STEP = 40;
-const CHAT_SCROLL_FORCE_MAX_STEP = 72;
 let chatAutoFollow = true;
 let chatScrollTrackingReady = false;
 let pendingChatScrollFrame = 0;
-let chatScrollAnimating = false;
-let chatScrollForceMode = false;
 
 function chatScroller() {
   return document.getElementById("chat-scroll");
@@ -38,8 +118,21 @@ function cancelChatScrollAnimation() {
     cancelAnimationFrame(pendingChatScrollFrame);
     pendingChatScrollFrame = 0;
   }
-  chatScrollAnimating = false;
-  chatScrollForceMode = false;
+}
+
+function scheduleScrollToBottom(options = {}) {
+  if (options.force || options.instant) {
+    scrollToBottom(options);
+    return;
+  }
+  if (pendingChatScrollFrame) return;
+
+  // 流式内容可能在很短时间内增加很多高度。按帧合并更新后直接定位，
+  // 避免使用固定步长动画导致滚动位置持续落后于回答内容。
+  pendingChatScrollFrame = requestAnimationFrame(() => {
+    pendingChatScrollFrame = 0;
+    scrollToBottom(options);
+  });
 }
 
 function initChatScrollTracking() {
@@ -49,7 +142,6 @@ function initChatScrollTracking() {
   chatScrollTrackingReady = true;
 
   scroller.addEventListener("scroll", () => {
-    if (chatScrollAnimating) return;
     chatAutoFollow = isChatNearBottom(scroller);
   });
 
@@ -78,44 +170,17 @@ function scrollToBottom(options = {}) {
   const scroller = chatScroller();
   if (!scroller) return;
   initChatScrollTracking();
+  if (options.force) {
+    // 新消息提交后重新开启自动跟随，即使用户此前停留在历史位置。
+    chatAutoFollow = true;
+  }
   if (!options.force && !chatAutoFollow && !isChatNearBottom(scroller)) return;
 
-  const applyInstantScroll = () => {
-    cancelChatScrollAnimation();
-    scroller.scrollTop = chatMaxScrollTop(scroller);
-    chatAutoFollow = true;
-  };
-
-  if (options.instant) {
-    applyInstantScroll();
-    return;
-  }
-
-  chatScrollForceMode = chatScrollForceMode || Boolean(options.force);
-  chatScrollAnimating = true;
-
-  const applyAnimatedScroll = () => {
-    pendingChatScrollFrame = 0;
-    const target = chatMaxScrollTop(scroller);
-    const distance = target - scroller.scrollTop;
-
-    if (distance <= CHAT_SCROLL_SNAP_THRESHOLD) {
-      scroller.scrollTop = target;
-      chatAutoFollow = true;
-      chatScrollAnimating = false;
-      chatScrollForceMode = false;
-      return;
-    }
-
-    const maxStep = chatScrollForceMode ? CHAT_SCROLL_FORCE_MAX_STEP : CHAT_SCROLL_MAX_STEP;
-    const easedStep = Math.ceil(distance * (chatScrollForceMode ? 0.24 : 0.14));
-    scroller.scrollTop += Math.min(maxStep, Math.max(1, easedStep));
-    pendingChatScrollFrame = requestAnimationFrame(applyAnimatedScroll);
-  };
-
-  if (!pendingChatScrollFrame) {
-    pendingChatScrollFrame = requestAnimationFrame(applyAnimatedScroll);
-  }
+  // force/instant 调用可能需要取消尚未执行的普通按帧请求，避免旧请求
+  // 在新内容渲染前再次执行并覆盖用户刚刚的滚动位置。
+  cancelChatScrollAnimation();
+  scroller.scrollTop = chatMaxScrollTop(scroller);
+  chatAutoFollow = true;
 }
 
 function setStatus(messageId, value) {

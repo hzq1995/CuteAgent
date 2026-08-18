@@ -36,8 +36,14 @@ function isTableDivider(line) {
 function renderTable(rows) {
   if (rows.length < 2 || !isTableDivider(rows[1])) return null;
   const head = parseTableRow(rows[0]);
-  const body = rows.slice(2).map(parseTableRow).filter(Boolean);
-  if (!head || !body.length || body.some((row) => row.length !== head.length)) return null;
+  if (!head) return null;
+
+  // 流式输出时，最后一行经常还没有接收完整。忽略这类暂不完整的行，
+  // 保留已经确认的表格结构，避免表格和普通段落之间来回切换。
+  const parsedBody = rows.slice(2).map(parseTableRow);
+  const completedBody = parsedBody.slice(0, -1);
+  if (completedBody.some((row) => !row || row.length !== head.length)) return null;
+  const body = parsedBody.filter((row) => row && row.length === head.length);
 
   return [
     "<div class=\"table-scroll\"><table>",
@@ -108,7 +114,9 @@ function renderMarkdown(source) {
       continue;
     }
 
-    if (parseTableRow(line)) {
+    // 表格的最后一行在流式传输中可能还没有收到结尾的 `|`，
+    // 仍把它留在表格缓冲区里，避免暂时降级成表格后面的普通段落。
+    if (parseTableRow(line) || (table.length >= 2 && line.trim().startsWith("|"))) {
       flushParagraph();
       flushList();
       table.push(line);

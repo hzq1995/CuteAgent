@@ -6,6 +6,7 @@
     <title>🌸 CuteHarness 定时任务</title>
     <link rel="icon" href="/static/pika.ico?v={{ static_v }}" type="image/x-icon">
     <link rel="stylesheet" href="/static/styles.css?v={{ static_v }}">
+    <script src="/static/scheduled-tasks.js?v={{ static_v }}" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -18,40 +19,50 @@
           </div>
 
           <form class="panel-form" method="post" action="{% if editing_task %}/scheduled-tasks/{{ editing_task.id }}{% else %}/scheduled-tasks{% endif %}">
+            {% if form_error %}
+              <div class="form-error" role="alert">{{ form_error }}</div>
+            {% endif %}
             <div class="form-row two">
               <label>
                 <span>标题</span>
-                <input name="title" value="{{ editing_task.title if editing_task else '' }}" placeholder="每日业务摘要">
+                <input name="title" value="{{ form_data.title }}" placeholder="工作日业务摘要">
               </label>
               <label>
                 <span>计划类型</span>
-                <select name="schedule_type">
-                  {% set current_type = editing_task.schedule_type if editing_task else 'daily' %}
-                  <option value="once" {% if current_type == 'once' %}selected{% endif %}>单次：YYYY-MM-DD HH:mm</option>
-                  <option value="daily" {% if current_type == 'daily' %}selected{% endif %}>每天：HH:mm</option>
-                  <option value="interval_minutes" {% if current_type == 'interval_minutes' %}selected{% endif %}>间隔分钟</option>
+                <select id="schedule-type" name="schedule_type">
+                  <option value="once" {% if form_data.schedule_type == 'once' %}selected{% endif %}>单次执行</option>
+                  <option value="interval" {% if form_data.schedule_type == 'interval' %}selected{% endif %}>固定间隔</option>
+                  <option value="cron" {% if form_data.schedule_type == 'cron' %}selected{% endif %}>Cron 表达式</option>
+                  <option value="daily" {% if form_data.schedule_type == 'daily' %}selected{% endif %}>每天（兼容格式）</option>
+                  <option value="interval_minutes" {% if form_data.schedule_type == 'interval_minutes' %}selected{% endif %}>间隔分钟（兼容格式）</option>
                 </select>
               </label>
             </div>
             <div class="form-row two">
               <label>
                 <span>计划值</span>
-                <input name="schedule_value" value="{{ editing_task.schedule_value if editing_task else '09:00' }}" required>
+                <input id="schedule-value" name="schedule_value" value="{{ form_data.schedule_value }}" required>
+                <small id="schedule-help" class="form-help"></small>
               </label>
-              <div class="check-group">
-                <label class="check-line">
-                  <input name="enabled" type="checkbox" {% if not editing_task or editing_task.enabled %}checked{% endif %}>
-                  <span>启用</span>
-                </label>
-                <label class="check-line">
-                  <input name="auto_delete" type="checkbox" {% if not editing_task or editing_task.get('auto_delete', True) %}checked{% endif %}>
-                  <span>运行后自动删除</span>
-                </label>
-              </div>
+              <label>
+                <span>时区</span>
+                <input name="timezone" value="{{ form_data.timezone or 'Asia/Shanghai' }}" placeholder="Asia/Shanghai">
+                <small class="form-help">使用 IANA 时区名称；默认 Asia/Shanghai。程序停止期间错过的执行会直接跳过。</small>
+              </label>
+            </div>
+            <div class="check-group check-group-inline">
+              <label class="check-line">
+                <input name="enabled" type="checkbox" {% if form_data.enabled %}checked{% endif %}>
+                <span>启用</span>
+              </label>
+              <label class="check-line">
+                <input name="auto_delete" type="checkbox" {% if form_data.auto_delete %}checked{% endif %}>
+                <span>单次任务运行后自动删除</span>
+              </label>
             </div>
             <label>
               <span>任务 Prompt</span>
-              <textarea name="prompt" rows="5" required>{{ editing_task.prompt if editing_task else '' }}</textarea>
+              <textarea name="prompt" rows="5" required>{{ form_data.prompt }}</textarea>
             </label>
             <div class="form-actions">
               <button type="submit">{{ "保存修改" if editing_task else "创建任务" }}</button>
@@ -66,16 +77,21 @@
               <article class="task-card">
                 <div class="task-card-head">
                   <h2>{{ task.title }}</h2>
-                  <span class="pill {% if task.enabled %}succeeded{% else %}failed{% endif %}">{{ "启用" if task.enabled else "停用" }}</span>
+                  {% if task.last_result == 'skipped' %}
+                    <span class="pill skipped">已跳过</span>
+                  {% elif task.enabled %}
+                    <span class="pill succeeded">启用</span>
+                  {% else %}
+                    <span class="pill failed">停用</span>
+                  {% endif %}
                 </div>
-                <p class="muted">{{ task.schedule_type }} / {{ task.schedule_value }}
-                  {%- if task.schedule_type == 'once' and task.get('auto_delete', True) %} · 自动删除{% endif -%}
-                </p>
+                <p class="muted">{{ task.schedule_display or '计划未配置' }} · {{ task.timezone or 'Asia/Shanghai' }}</p>
                 <p>{{ task.prompt }}</p>
                 <dl class="meta-list">
                   <div><dt>下次运行</dt><dd>{{ task.next_run_at or "-" }}</dd></div>
                   <div><dt>上次运行</dt><dd>{{ task.last_run_at or "-" }}</dd></div>
                   <div><dt>结果</dt><dd>{{ task.last_result or "-" }}</dd></div>
+                  {% if task.schedule_error %}<div><dt>计划错误</dt><dd class="error">{{ task.schedule_error }}</dd></div>{% endif %}
                   {% if task.error %}<div><dt>错误</dt><dd class="error">{{ task.error }}</dd></div>{% endif %}
                 </dl>
                 <div class="task-actions">

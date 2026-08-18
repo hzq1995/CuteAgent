@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import time
@@ -30,6 +31,9 @@ TOOL_DEFINITION = {
 def run(context: ToolContext, code: str, timeout_seconds: int = 60) -> dict[str, Any]:
     timeout = max(1, min(int(timeout_seconds), context.python_timeout_seconds))
     started_at = time.monotonic()
+    environment = os.environ.copy()
+    environment["PYTHONIOENCODING"] = "utf-8"
+    environment["PYTHONUTF8"] = "1"
     process = subprocess.Popen(
         [sys.executable, "-c", code],
         cwd=context.base_dir,
@@ -38,6 +42,7 @@ def run(context: ToolContext, code: str, timeout_seconds: int = 60) -> dict[str,
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=environment,
     )
     try:
         while process.poll() is None:

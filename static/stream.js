@@ -1,6 +1,6 @@
 // stream.js — SSE 流式连接管理
 // 依赖：dom-utils.js（assistantParts, appendAssistantPlaceholder, setStatus, markAssistantFailed, collapseReasoning, scrollToBottom）
-// 依赖：message-parts.js（appendReasoningDelta, appendAnswerDelta, appendToolMessage）
+// 依赖：message-parts.js（appendReasoningDelta, appendAnswerDelta, appendToolCall, appendToolMessage）
 // 依赖：composer.js（setComposerBusy）
 // 依赖全局变量：currentSource（由 index.html 内联脚本声明）
 
@@ -42,6 +42,12 @@ function startConversationStream(conversationId, options = {}) {
     if (!event.data) return;
     const payload = JSON.parse(event.data);
     appendAnswerDelta(payload.message_id, payload.delta);
+  });
+
+  source.addEventListener("tool_call", (event) => {
+    if (!event.data) return;
+    const payload = JSON.parse(event.data);
+    appendToolCall(payload.message_id, payload.message);
   });
 
   source.addEventListener("tool_call_result", (event) => {

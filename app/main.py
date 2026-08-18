@@ -21,6 +21,8 @@ from app.config import BASE_DIR, get_settings
 from app.llm_client import OpenAICompatibleClient
 from app.llm_config import MIMO_PROVIDER, custom_model_by_provider, provider_options, request_options_for_provider
 from app.memory_store import MemoryStore
+from app.image_support import MAX_IMAGE_BYTES, MAX_IMAGES, image_mime_type
+from app.schedule_types import DEFAULT_TIMEZONE, ScheduleValidationError
 from app.scheduler_store import ScheduledTaskStore
 from app.storage import TaskStore
 from app.tool_settings import ToolSettingsStore
@@ -73,6 +75,11 @@ tool_settings_store = ToolSettingsStore(BASE_DIR / "data" / "tool_settings.json"
 memory_store = MemoryStore(BASE_DIR / "data" / "memories.json")
 SKILLS_DIR = BASE_DIR / "skills"
 CANCELLED_STATUS = "cancelled"
+SCHEDULED_TASK_PROMPT_PREFIX = (
+    "[定时任务触发]\n"
+    "这是一条由 CuteHarness 定时任务自动触发的消息。"
+    "请按照定时任务内容执行：\n"
+)
 
 
 class ConversationCancelled(Exception):
@@ -131,6 +138,7 @@ async def auth_exception_handler(request: Request, exc: HTTPException) -> Redire
 @app.on_event("startup")
 async def start_scheduler() -> None:
     scheduled_task_store.mark_interrupted_runs()
+    scheduled_task_store.skip_missed_tasks()
     app.state.scheduler_task = asyncio.create_task(scheduler_loop())
 
 
@@ -291,6 +299,7 @@ async def conversation_stream(
         sent_reasoning_len = int(request.query_params.get("reasoning_offset", "0") or "0")
         sent_answer_len = int(request.query_params.get("answer_offset", "0") or "0")
         sent_tool_count = int(request.query_params.get("tool_count", "0") or "0")
+        sent_tool_call_count = 0
         sent_status = ""
         sent_context_tokens: int | None = None
 
@@ -313,6 +322,7 @@ async def conversation_stream(
                     sent_reasoning_len = 0
                     sent_answer_len = 0
                     sent_tool_count = 0
+                    sent_tool_call_count = 0
                 assistant_id = assistant["id"]
                 sent_status = ""
                 yield sse("assistant", {"message_id": assistant_id})
@@ -343,6 +353,28 @@ async def conversation_stream(
                     {"message_id": assistant_id, "delta": answer[sent_answer_len:]},
                 )
                 sent_answer_len = len(answer)
+
+            tool_calls = assistant.get("tool_calls") or []
+            if len(tool_calls) > sent_tool_call_count:
+                for tool_call in tool_calls[sent_tool_call_count:]:
+                    function = tool_call.get("function", {})
+                    raw_arguments = function.get("arguments", "") or "{}"
+                    try:
+                        display_arguments = parse_tool_arguments(raw_arguments)
+                    except (TypeError, ValueError):
+                        display_arguments = raw_arguments
+                    yield sse(
+                        "tool_call",
+                        {
+                            "message_id": assistant_id,
+                            "message": {
+                                "tool_call_id": tool_call.get("id", ""),
+                                "name": function.get("name", ""),
+                                "arguments": display_arguments,
+                            },
+                        },
+                    )
+                sent_tool_call_count = len(tool_calls)
 
             tools = current_tool_messages(conversation, assistant_id)
             if len(tools) > sent_tool_count:
@@ -450,10 +482,58 @@ async def scheduled_tasks_page(request: Request):
     redirect = redirect_if_unauthenticated(request)
     if redirect:
         return redirect
+    return render_scheduled_tasks(request)
+
+
+def scheduled_task_form_data(task: dict | None = None) -> dict:
+    if task:
+        schedule_type = task.get("schedule_type", "cron")
+        schedule_value = task.get("schedule_value", "")
+        if schedule_type == "once":
+            try:
+                schedule_value = datetime.fromisoformat(task.get("schedule_config", {}).get("at", "")).strftime(
+                    "%Y-%m-%dT%H:%M"
+                )
+            except (TypeError, ValueError):
+                schedule_value = task.get("schedule_value", "")
+        return {
+            "title": task.get("title", ""),
+            "prompt": task.get("prompt", ""),
+            "schedule_type": schedule_type,
+            "schedule_value": schedule_value,
+            "timezone": task.get("timezone", DEFAULT_TIMEZONE),
+            "enabled": bool(task.get("enabled", True)),
+            "auto_delete": bool(task.get("auto_delete", True)),
+        }
+    return {
+        "title": "",
+        "prompt": "",
+        "schedule_type": "cron",
+        "schedule_value": "0 9 * * *",
+        "timezone": DEFAULT_TIMEZONE,
+        "enabled": True,
+        "auto_delete": True,
+    }
+
+
+def render_scheduled_tasks(
+    request: Request,
+    *,
+    editing_task: dict | None = None,
+    form_data: dict | None = None,
+    form_error: str = "",
+    status_code: int = 200,
+):
     return templates.TemplateResponse(
         "scheduled_tasks.html",
         base_context(request, active_page="scheduled_tasks")
-        | {"scheduled_tasks": scheduled_task_store.list_tasks(), "editing_task": None},
+        | {
+            "scheduled_tasks": scheduled_task_store.list_tasks(),
+            "editing_task": editing_task,
+            "form_data": form_data or scheduled_task_form_data(editing_task),
+            "form_error": form_error,
+        },
+        status_code=status_code,
     )
 
 
@@ -464,11 +544,32 @@ async def create_scheduled_task(
     prompt: str = Form(...),
     schedule_type: str = Form(...),
     schedule_value: str = Form(...),
+    timezone: str = Form(DEFAULT_TIMEZONE),
     enabled: str | None = Form(None),
     auto_delete: str | None = Form(None),
 ):
     require_login(request)
-    scheduled_task_store.create_task(title, prompt, schedule_type, schedule_value, enabled == "on", auto_delete == "on")
+    form_data = {
+        "title": title,
+        "prompt": prompt,
+        "schedule_type": schedule_type,
+        "schedule_value": schedule_value,
+        "timezone": timezone,
+        "enabled": enabled == "on",
+        "auto_delete": auto_delete == "on",
+    }
+    try:
+        scheduled_task_store.create_task(
+            title,
+            prompt,
+            schedule_type,
+            schedule_value,
+            enabled == "on",
+            auto_delete == "on",
+            timezone,
+        )
+    except ScheduleValidationError as exc:
+        return render_scheduled_tasks(request, form_data=form_data, form_error=str(exc), status_code=400)
     return RedirectResponse("/scheduled-tasks", status_code=303)
 
 
@@ -478,11 +579,7 @@ async def edit_scheduled_task_page(task_id: str, request: Request):
     task = scheduled_task_store.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Scheduled task not found")
-    return templates.TemplateResponse(
-        "scheduled_tasks.html",
-        base_context(request, active_page="scheduled_tasks")
-        | {"scheduled_tasks": scheduled_task_store.list_tasks(), "editing_task": task},
-    )
+    return render_scheduled_tasks(request, editing_task=task)
 
 
 @app.post("/scheduled-tasks/{task_id}")
@@ -493,11 +590,36 @@ async def update_scheduled_task(
     prompt: str = Form(...),
     schedule_type: str = Form(...),
     schedule_value: str = Form(...),
+    timezone: str = Form(DEFAULT_TIMEZONE),
     enabled: str | None = Form(None),
     auto_delete: str | None = Form(None),
 ):
     require_login(request)
-    scheduled_task_store.update_task(task_id, title, prompt, schedule_type, schedule_value, enabled == "on", auto_delete == "on")
+    task = scheduled_task_store.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Scheduled task not found")
+    form_data = {
+        "title": title,
+        "prompt": prompt,
+        "schedule_type": schedule_type,
+        "schedule_value": schedule_value,
+        "timezone": timezone,
+        "enabled": enabled == "on",
+        "auto_delete": auto_delete == "on",
+    }
+    try:
+        scheduled_task_store.update_task(
+            task_id,
+            title,
+            prompt,
+            schedule_type,
+            schedule_value,
+            enabled == "on",
+            auto_delete == "on",
+            timezone,
+        )
+    except ScheduleValidationError as exc:
+        return render_scheduled_tasks(request, editing_task=task, form_data=form_data, form_error=str(exc), status_code=400)
     return RedirectResponse("/scheduled-tasks", status_code=303)
 
 
@@ -875,12 +997,18 @@ async def save_uploaded_files(conversation_id: str, message_id: str, uploads: li
         raise HTTPException(status_code=400, detail="Invalid upload path")
     target_dir.mkdir(parents=True, exist_ok=True)
 
+    image_upload_count = sum(1 for upload in uploads if image_mime_type(upload.filename or ""))
+    if image_upload_count > MAX_IMAGES:
+        raise HTTPException(status_code=400, detail=f"最多同时上传 {MAX_IMAGES} 张图片")
+
     attachments = []
     used_names: set[str] = set()
     for upload in uploads:
         filename = unique_filename(safe_upload_filename(upload.filename or "upload"), used_names, target_dir)
         path = target_dir / filename
         size_bytes = 0
+        image_type = image_mime_type(filename)
+        mime_type = image_type or upload.content_type or guess_media_type(filename)
         try:
             with path.open("wb") as handle:
                 while True:
@@ -888,7 +1016,16 @@ async def save_uploaded_files(conversation_id: str, message_id: str, uploads: li
                     if not chunk:
                         break
                     size_bytes += len(chunk)
+                    if image_type and size_bytes > MAX_IMAGE_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"图片 {filename} 超过 {MAX_IMAGE_BYTES // (1024 * 1024)} MB 限制",
+                        )
                     handle.write(chunk)
+        except HTTPException:
+            with suppress(OSError):
+                path.unlink()
+            raise
         except OSError as exc:
             with suppress(OSError):
                 path.unlink()
@@ -898,7 +1035,6 @@ async def save_uploaded_files(conversation_id: str, message_id: str, uploads: li
             await upload.close()
 
         rel_path = path.relative_to(BASE_DIR).as_posix()
-        mime_type = upload.content_type or guess_media_type(filename)
         attachments.append(
             {
                 "name": filename,
@@ -919,6 +1055,9 @@ def compose_prompt_with_attachments(prompt: str, attachments: list[dict]) -> str
         lines.append(cleaned_prompt)
         lines.append("")
     lines.append("[上传文件]")
+    has_image = any(attachment.get("is_image") for attachment in attachments)
+    if has_image:
+        lines.append("如需理解图片内容，可调用 view_images，传入图片的工作区路径和分析提示词。")
     for index, attachment in enumerate(attachments, start=1):
         lines.extend(
             [
@@ -980,6 +1119,8 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
             dingtalk_webhook_url=settings.dingtalk_webhook_url,
             dingtalk_access_token=settings.dingtalk_access_token,
             dingtalk_public_base_url=settings.dingtalk_public_base_url,
+            mimo_api_key=settings.mimo_api_key,
+            mimo_base_url=settings.mimo_base_url,
             disabled_tools=tool_settings_store.disabled_tools(),
             cancellation_event=cancel_event,
         )
@@ -1168,7 +1309,8 @@ async def scheduler_loop() -> None:
 async def run_scheduled_task(task: dict) -> None:
     conversation = None
     try:
-        conversation = store.create_conversation(task["prompt"])
+        scheduled_prompt = f"{SCHEDULED_TASK_PROMPT_PREFIX}{task['prompt']}"
+        conversation = store.create_conversation(scheduled_prompt)
         assistant = conversation["messages"][-1]
         await asyncio.to_thread(run_conversation_turn, conversation["id"], assistant["id"])
         updated = store.get_conversation(conversation["id"])
@@ -1184,7 +1326,7 @@ async def run_scheduled_task(task: dict) -> None:
             scheduled_task_store.mark_result(task["id"], "failed before conversation", str(exc))
 
     # Auto-delete one-time tasks after execution
-    if task.get("schedule_type") == "once" and task.get("auto_delete", True):
+    if task.get("schedule_type") == "once" and not task.get("enabled", True) and task.get("auto_delete", True):
         scheduled_task_store.delete_task(task["id"])
 
 

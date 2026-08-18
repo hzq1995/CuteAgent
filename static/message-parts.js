@@ -1,47 +1,6 @@
 // message-parts.js — 流式内容追加函数
 // 依赖：markdown.js（escapeHtml, renderAnswer via dom-utils.js）
-// 依赖：dom-utils.js（assistantParts, lastPart, renderAnswer, collapseReasoning, scrollToBottom）
-
-const answerRevealFrames = new WeakMap();
-const ANSWER_REVEAL_INTERVAL_MS = 19;
-
-function revealStepSize(pendingLength) {
-  if (pendingLength > 600) return 2;
-  return 1;
-}
-
-function startAnswerReveal(item) {
-  if (answerRevealFrames.has(item)) return;
-  item.classList.add("answer-revealing");
-  let lastRevealAt = 0;
-
-  const tick = (timestamp) => {
-    const visible = item.dataset.raw || "";
-    const target = item.dataset.rawTarget || visible;
-    const pendingLength = target.length - visible.length;
-
-    if (pendingLength <= 0) {
-      item.classList.remove("answer-revealing");
-      answerRevealFrames.delete(item);
-      renderAnswer(item);
-      return;
-    }
-
-    if (lastRevealAt && timestamp - lastRevealAt < ANSWER_REVEAL_INTERVAL_MS) {
-      answerRevealFrames.set(item, requestAnimationFrame(tick));
-      return;
-    }
-    lastRevealAt = timestamp;
-
-    const nextLength = visible.length + Math.min(revealStepSize(pendingLength), pendingLength);
-    item.dataset.raw = target.slice(0, nextLength);
-    renderAnswer(item);
-    scrollToBottom();
-    answerRevealFrames.set(item, requestAnimationFrame(tick));
-  };
-
-  answerRevealFrames.set(item, requestAnimationFrame(tick));
-}
+// 依赖：dom-utils.js（assistantParts, lastPart, renderAnswer, collapseReasoning, scheduleScrollToBottom）
 
 function appendReasoningDelta(messageId, delta) {
   const parts = assistantParts(messageId);
@@ -57,7 +16,66 @@ function appendReasoningDelta(messageId, delta) {
     parts.appendChild(item);
   }
   item.querySelector("pre").textContent += delta;
-  scrollToBottom();
+  scheduleScrollToBottom();
+}
+
+function formatToolValue(value) {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value ?? {}, null, 2).replace(/\\u([\dA-Fa-f]{4})/g, (_, code) =>
+      String.fromCharCode(parseInt(code, 16))
+    );
+  } catch {
+    return String(value ?? "");
+  }
+}
+
+function findToolCallCard(parts, toolCallId) {
+  if (!toolCallId) return null;
+  return Array.from(parts.querySelectorAll(".tool-call-message")).find(
+    (item) => item.dataset.toolCallId === toolCallId
+  );
+}
+
+function updateToolCallStatus(parts, toolCallId, status) {
+  const card = findToolCallCard(parts, toolCallId);
+  const target = card?.querySelector(".message-status");
+  if (!target) return;
+  target.textContent = status || "succeeded";
+  target.className = `message-status ${status || "succeeded"}`;
+}
+
+function findToolResultCard(parts, toolCallId) {
+  if (!toolCallId) return null;
+  return Array.from(parts.querySelectorAll(".tool-result-message")).find(
+    (item) => item.dataset.toolCallId === toolCallId
+  );
+}
+
+function appendToolCall(messageId, message) {
+  const parts = assistantParts(messageId);
+  if (!parts || !message) return;
+  if (findToolCallCard(parts, message.tool_call_id)) return;
+
+  parts.querySelector(".waiting")?.remove();
+  const article = document.createElement("article");
+  article.className = "message tool-message inline-tool-message tool-call-message";
+  article.dataset.partType = "tool-call";
+  article.dataset.toolCallId = message.tool_call_id || "";
+  article.innerHTML = `
+    <div class="tool-card">
+      <div class="tool-card-header">
+        <span>工具调用 · ${escapeHtml(message.name || "tool")}</span>
+        <span class="message-status running">调用中</span>
+      </div>
+      <details open>
+        <summary>调用参数</summary>
+        <pre>${escapeHtml(formatToolValue(message.arguments))}</pre>
+      </details>
+    </div>
+  `;
+  parts.appendChild(article);
+  scheduleScrollToBottom();
 }
 
 function appendAnswerDelta(messageId, delta) {
@@ -70,14 +88,14 @@ function appendAnswerDelta(messageId, delta) {
     item.className = "answer markdown-body";
     item.dataset.partType = "answer";
     item.dataset.raw = "";
-    item.dataset.rawTarget = "";
     parts.appendChild(item);
   }
   if (item.dataset.raw === undefined) {
     item.dataset.raw = item.textContent || "";
   }
-  item.dataset.rawTarget = (item.dataset.rawTarget || item.dataset.raw || "") + delta;
-  startAnswerReveal(item);
+  item.dataset.raw += delta;
+  renderAnswer(item);
+  scheduleScrollToBottom();
   collapseReasoning(messageId);
 }
 
@@ -85,25 +103,28 @@ function appendToolMessage(messageId, message) {
   const parts = assistantParts(messageId);
   if (!parts) return;
   parts.querySelector(".waiting")?.remove();
+  updateToolCallStatus(parts, message.tool_call_id, message.status);
+  if (findToolResultCard(parts, message.tool_call_id)) return;
   const article = document.createElement("article");
-  article.className = "message tool-message inline-tool-message";
-  article.dataset.partType = "tool";
+  article.className = "message tool-message inline-tool-message tool-result-message";
+  article.dataset.partType = "tool-result";
+  article.dataset.toolCallId = message.tool_call_id || "";
   const transfer = transferredFileFromToolResult(message.result);
   article.innerHTML = `
     <div class="tool-card">
       <div class="tool-card-header">
-        <span>${escapeHtml(message.name || "tool")}</span>
+        <span>工具返回 · ${escapeHtml(message.name || "tool")}</span>
         <span class="message-status ${escapeHtml(message.status || "")}">${escapeHtml(message.status || "")}</span>
       </div>
       ${transfer ? transferredFileHtml(transfer.file) : ""}
       <details>
-        <summary>查看工具参数和结果</summary>
-        <pre>${escapeHtml(JSON.stringify({ arguments: message.arguments, result: message.result }, null, 2).replace(/\\u([\dA-Fa-f]{4})/g, (_, c) => String.fromCharCode(parseInt(c, 16))))}</pre>
+        <summary>查看返回结果</summary>
+        <pre>${escapeHtml(formatToolValue(message.result))}</pre>
       </details>
     </div>
   `;
   parts.appendChild(article);
-  scrollToBottom();
+  scheduleScrollToBottom();
 }
 
 function transferredFileFromToolResult(result) {

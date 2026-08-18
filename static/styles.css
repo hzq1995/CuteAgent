@@ -865,6 +865,7 @@ button {
   grid-template-columns: 42px minmax(0, 1fr) auto;
   min-width: 0;
   padding: 7px;
+  position: relative;
 }
 
 .selected-file-preview,
@@ -876,6 +877,23 @@ button {
 
 .selected-file-preview {
   object-fit: cover;
+}
+
+.selected-file.selected-image {
+  display: flex;
+  min-height: 70px;
+  padding: 8px 40px 8px 8px;
+}
+
+.selected-file.selected-image .selected-file-preview {
+  height: 64px;
+  width: 64px;
+}
+
+.selected-file.selected-image .selected-file-remove {
+  position: absolute;
+  right: 4px;
+  top: 4px;
 }
 
 .selected-file-icon {
@@ -960,6 +978,20 @@ button {
 
 .panel-form textarea {
   resize: vertical;
+}
+
+.form-help {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.form-error {
+  background: #fff0e8;
+  border: 1px solid #e7a581;
+  border-radius: 8px;
+  color: var(--warn);
+  padding: 10px 12px;
 }
 
 .form-row.two {
@@ -1136,6 +1168,11 @@ button {
   flex-direction: column;
   gap: 8px;
   justify-content: end;
+}
+
+.check-group-inline {
+  flex-direction: row;
+  flex-wrap: wrap;
 }
 
 .form-actions,
@@ -1373,6 +1410,10 @@ button {
 
 .pill.failed {
   color: var(--warn);
+}
+
+.pill.skipped {
+  color: #8b5c17;
 }
 
 .meta-list {

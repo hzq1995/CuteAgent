@@ -14,3 +14,4 @@ data/memories.json
 data/
 .vscode/
 utils/sync_files.py
+docs/
