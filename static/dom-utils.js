@@ -18,6 +18,15 @@ function patchAnswerDom(target, html) {
   const template = document.createElement("template");
   template.innerHTML = html;
 
+  // Server-rendered answers start as a raw text node.  The incremental DOM
+  // patcher below compares element children only, so leaving that text node in
+  // place renders the source Markdown followed by the rendered Markdown.
+  // Markdown output is always made of elements, therefore non-element children
+  // are stale source text (or template whitespace) and must be removed first.
+  Array.from(target.childNodes).forEach((node) => {
+    if (node.nodeType !== Node.ELEMENT_NODE) node.remove();
+  });
+
   const currentScroller = chatScroller();
   const shouldPreserveScroll = currentScroller && !isChatNearBottom(currentScroller);
   const scrollAnchor = shouldPreserveScroll ? captureChatScrollAnchor(currentScroller) : null;
@@ -282,49 +291,6 @@ function collapseReasoning(messageId) {
 
 function assistantParts(messageId) {
   return document.getElementById(`parts-${messageId}`);
-}
-
-function comparableAnswerText(value) {
-  return String(value || "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function collapseRepeatedAnswerText(raw) {
-  const chunks = String(raw || "").split(/\n\s*\n/);
-  if (chunks.length < 2) return String(raw || "");
-
-  for (let index = 1; index < chunks.length; index += 1) {
-    const prefix = chunks.slice(0, index).join("\n\n").trim();
-    const suffix = chunks.slice(index).join("\n\n").trim();
-    if (prefix && suffix && comparableAnswerText(prefix) === comparableAnswerText(suffix)) {
-      // 保留后面的版本。它通常是工具执行完成后的最终答复，格式也更完整。
-      return suffix;
-    }
-  }
-  return String(raw || "");
-}
-
-function deduplicateAssistantAnswers(partsOrMessageId) {
-  const parts = typeof partsOrMessageId === "string" ? assistantParts(partsOrMessageId) : partsOrMessageId;
-  if (!parts) return;
-
-  const answers = Array.from(parts.children).filter((item) => item.dataset.partType === "answer");
-  const seen = new Map();
-  answers.forEach((item) => {
-    const raw = item.dataset.raw === undefined ? item.textContent || "" : item.dataset.raw;
-    const collapsed = collapseRepeatedAnswerText(raw);
-    if (collapsed !== raw) {
-      item.dataset.raw = collapsed;
-      item.dataset.renderedRaw = "";
-    }
-
-    const key = comparableAnswerText(collapsed);
-    if (!key) return;
-    const previous = seen.get(key);
-    if (previous) previous.remove();
-    seen.set(key, item);
-  });
 }
 
 function lastPart(messageId, type) {

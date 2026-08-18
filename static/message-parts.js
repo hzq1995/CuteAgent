@@ -188,7 +188,6 @@ function syncAssistantSnapshot(messageId, message) {
     renderAnswer(item);
   }
 
-  deduplicateAssistantAnswers(parts);
   parts.querySelectorAll(".answer").forEach(renderAnswer);
   scheduleScrollToBottom();
 }

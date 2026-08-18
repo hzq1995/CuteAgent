@@ -164,7 +164,6 @@ function startConversationStream(conversationId, options = {}) {
     if (payload.message_id && payload.status) {
       setStatus(payload.message_id, payload.status);
     }
-    deduplicateAssistantAnswers(payload.message_id);
     collapseReasoning(payload.message_id);
     document.querySelector(`[data-message-id="${payload.message_id}"] .waiting`)?.remove();
     setComposerBusy(false);
