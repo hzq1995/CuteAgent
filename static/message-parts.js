@@ -68,7 +68,7 @@ function appendToolCall(messageId, message) {
         <span>工具调用 · ${escapeHtml(message.name || "tool")}</span>
         <span class="message-status running">调用中</span>
       </div>
-      <details open>
+      <details>
         <summary>调用参数</summary>
         <pre>${escapeHtml(formatToolValue(message.arguments))}</pre>
       </details>

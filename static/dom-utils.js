@@ -20,7 +20,7 @@ function patchAnswerDom(target, html) {
 
   const currentScroller = chatScroller();
   const shouldPreserveScroll = currentScroller && !isChatNearBottom(currentScroller);
-  const scrollTop = currentScroller?.scrollTop || 0;
+  const scrollAnchor = shouldPreserveScroll ? captureChatScrollAnchor(currentScroller) : null;
 
   const nextChildren = Array.from(template.content.children);
   for (let index = 0; index < nextChildren.length; index += 1) {
@@ -45,7 +45,7 @@ function patchAnswerDom(target, html) {
   }
 
   if (shouldPreserveScroll && currentScroller) {
-    currentScroller.scrollTop = scrollTop;
+    restoreChatScrollAnchor(currentScroller, scrollAnchor);
   }
 }
 
@@ -97,8 +97,12 @@ function patchTableSection(currentSection, nextSection) {
 
 const CHAT_BOTTOM_THRESHOLD = 80;
 let chatAutoFollow = true;
+let chatUserScrollIntent = false;
 let chatScrollTrackingReady = false;
 let pendingChatScrollFrame = 0;
+let chatProgrammaticScroll = false;
+let chatProgrammaticScrollReleaseFrame = 0;
+let chatProgrammaticScrollTarget = 0;
 
 function chatScroller() {
   return document.getElementById("chat-scroll");
@@ -118,6 +122,52 @@ function cancelChatScrollAnimation() {
     cancelAnimationFrame(pendingChatScrollFrame);
     pendingChatScrollFrame = 0;
   }
+}
+
+function cancelProgrammaticScrollRelease() {
+  if (chatProgrammaticScrollReleaseFrame) {
+    cancelAnimationFrame(chatProgrammaticScrollReleaseFrame);
+    chatProgrammaticScrollReleaseFrame = 0;
+  }
+}
+
+function setChatScrollTop(scroller, value) {
+  cancelProgrammaticScrollRelease();
+  chatProgrammaticScroll = true;
+  chatProgrammaticScrollTarget = value;
+  scroller.scrollTop = value;
+  chatProgrammaticScrollReleaseFrame = requestAnimationFrame(() => {
+    chatProgrammaticScrollReleaseFrame = 0;
+    chatProgrammaticScroll = false;
+  });
+}
+
+function captureChatScrollAnchor(scroller) {
+  const scrollerTop = scroller.getBoundingClientRect().top;
+  const messages = scroller.querySelectorAll(".message-list > .message");
+  for (const message of messages) {
+    if (message.getBoundingClientRect().bottom > scrollerTop + 1) {
+      return {
+        element: message,
+        top: message.getBoundingClientRect().top,
+      };
+    }
+  }
+  return null;
+}
+
+function restoreChatScrollAnchor(scroller, anchor) {
+  if (!anchor?.element?.isConnected) return;
+  const delta = anchor.element.getBoundingClientRect().top - anchor.top;
+  if (Math.abs(delta) < 0.5) return;
+  setChatScrollTop(scroller, scroller.scrollTop + delta);
+}
+
+function markUserChatInteraction() {
+  cancelProgrammaticScrollRelease();
+  chatProgrammaticScroll = false;
+  chatUserScrollIntent = true;
+  chatAutoFollow = false;
 }
 
 function scheduleScrollToBottom(options = {}) {
@@ -142,15 +192,23 @@ function initChatScrollTracking() {
   chatScrollTrackingReady = true;
 
   scroller.addEventListener("scroll", () => {
+    if (chatProgrammaticScroll) {
+      const movedByUser = Math.abs(scroller.scrollTop - chatProgrammaticScrollTarget) > 1;
+      if (!movedByUser) return;
+      chatProgrammaticScroll = false;
+      cancelProgrammaticScrollRelease();
+    }
+    if (!chatUserScrollIntent) return;
     chatAutoFollow = isChatNearBottom(scroller);
+    if (chatAutoFollow) chatUserScrollIntent = false;
   });
 
-  ["wheel", "touchstart", "pointerdown"].forEach((eventName) => {
+  ["wheel", "touchstart", "pointerdown", "mousedown"].forEach((eventName) => {
     scroller.addEventListener(
       eventName,
       () => {
         cancelChatScrollAnimation();
-        chatAutoFollow = isChatNearBottom(scroller);
+        markUserChatInteraction();
       },
       { passive: true }
     );
@@ -160,7 +218,7 @@ function initChatScrollTracking() {
     "toggle",
     (event) => {
       if (!scroller.contains(event.target)) return;
-      chatAutoFollow = isChatNearBottom(scroller);
+      if (chatAutoFollow) scheduleScrollToBottom();
     },
     true
   );
@@ -179,7 +237,8 @@ function scrollToBottom(options = {}) {
   // force/instant 调用可能需要取消尚未执行的普通按帧请求，避免旧请求
   // 在新内容渲染前再次执行并覆盖用户刚刚的滚动位置。
   cancelChatScrollAnimation();
-  scroller.scrollTop = chatMaxScrollTop(scroller);
+  chatUserScrollIntent = false;
+  setChatScrollTop(scroller, chatMaxScrollTop(scroller));
   chatAutoFollow = true;
 }
 
