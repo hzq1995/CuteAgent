@@ -1,4 +1,6 @@
 import os
+import re
+import signal
 import subprocess
 import time
 from typing import Any
@@ -14,7 +16,10 @@ TOOL_DEFINITION = {
         "description": (
             "Run a bash command in the CuteHarness workspace and return stdout, stderr, "
             "exit code, and timeout status. Set background=true for a long-running command; "
-            "it starts immediately with output written to a log file instead of waiting for it."
+            "it starts immediately with output written to a log file instead of waiting for it. "
+            "Background mode is not a durable service supervisor; use an external service "
+            "manager for processes that must survive execution-environment cleanup. Do not "
+            "use nohup, setsid, or disown for durable services in the Pika execution environment."
         ),
         "parameters": {
             "type": "object",
@@ -46,6 +51,11 @@ def run(
     timeout_seconds: int = 60,
     background: bool = False,
 ) -> dict[str, Any]:
+    if _has_unsupported_detach_command(command):
+        raise ValueError(
+            "Pika reclaims the complete execution process tree; nohup/setsid/disown cannot "
+            "keep a service alive. Use the project's external service manager instead."
+        )
     if background:
         return _start_background_process(context, command)
 
@@ -57,18 +67,20 @@ def run(
     process = subprocess.Popen(
         ["bash", "-lc", command],
         cwd=context.base_dir,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
         env=environment,
+        start_new_session=True,
     )
     try:
         while process.poll() is None:
             if context.is_cancelled():
-                process.kill()
-                stdout, stderr = process.communicate()
+                _terminate_process_tree(process)
+                stdout, stderr = _communicate_after_termination(process)
                 return {
                     "stdout": truncate(stdout),
                     "stderr": truncate(stderr),
@@ -77,8 +89,8 @@ def run(
                     "cancelled": True,
                 }
             if time.monotonic() - started_at >= timeout:
-                process.kill()
-                stdout, stderr = process.communicate()
+                _terminate_process_tree(process)
+                stdout, stderr = _communicate_after_termination(process)
                 return {
                     "stdout": truncate(stdout),
                     "stderr": truncate(stderr),
@@ -96,9 +108,64 @@ def run(
         }
     except Exception:
         if process.poll() is None:
-            process.kill()
-            process.communicate()
+            _terminate_process_tree(process)
+            _communicate_after_termination(process)
         raise
+
+
+def _has_unsupported_detach_command(command: str) -> bool:
+    return bool(
+        re.search(
+            r"(?<![\w-])(?:nohup|setsid|disown)(?=\s|$)",
+            command,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _terminate_process_tree(process: subprocess.Popen) -> None:
+    """Stop the shell and descendants so they cannot keep tool pipes open."""
+    if os.name == "posix":
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+            return
+        except (ProcessLookupError, OSError):
+            pass
+    elif os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=5,
+            )
+            return
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
+
+    try:
+        process.kill()
+    except ProcessLookupError:
+        pass
+
+
+def _communicate_after_termination(process: subprocess.Popen) -> tuple[str, str]:
+    """Collect output after termination without waiting forever on inherited pipes."""
+    try:
+        return process.communicate(timeout=2)
+    except subprocess.TimeoutExpired as exc:
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode(errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode(errors="replace")
+        return stdout, stderr
 
 
 def _start_background_process(context: ToolContext, command: str) -> dict[str, Any]:
