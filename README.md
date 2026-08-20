@@ -29,7 +29,7 @@ The local `.env` file contains model provider API keys and the app password. Con
 
 ## Data
 
-Conversation records are stored as individual JSON files under `data/conversations/`.
+Conversation records are stored as individual JSON files under `data/conversations/`. Writes go through an in-memory cache and are flushed to disk after a short idle window (0.25s) or once pending changes exceed a size threshold (4096 chars), so streaming long replies does not hammer the filesystem. Reads are served from the cache when available.
 
 Application scheduled tasks are stored in `data/scheduled_tasks.json`, UI-editable Agent settings including active model provider/model are stored in `data/settings.json`, and global Agent memories are stored in `data/memories.json`.
 
@@ -70,6 +70,7 @@ Built-in tools:
 - `add_memory`: adds a key, durable, non-duplicate long-term memory.
 - `update_memory`: updates an existing memory by id.
 - `delete_memory`: deletes an existing memory by id.
+- `ask_user`: sends an interactive question card to the user, optionally with clickable options. The user's answer arrives as the next user message in the conversation.
 - `send_dingtalk_message`: sends a DingTalk markdown message and automatically prefixes title and body with `[业务通知]`. It accepts optional `file_paths` workspace-relative paths; image files are appended inline and other files are appended as links using `DINGTALK_PUBLIC_BASE_URL`.
 
 - `list_conversations`: lists recent conversation history.
@@ -81,6 +82,11 @@ DingTalk is no longer pushed automatically after every reply. The Agent sends Di
 
 When the chat input is focused, paste an image with Ctrl+V to add it as an attachment. Pasted images use the same upload path and can be removed from the composer before sending.
 
+## Long Conversations
+
+- **Compression.** When a conversation grows too long, click **压缩对话** in the composer (or `POST /conversations/{id}/compress`). Everything before the compression boundary is collapsed to plain user/assistant text when building the model context - tool calls and results are dropped from what the model sees, while the full history stays on disk. Compressing is refused with 409 while the conversation is running.
+- **Tool result previews.** Tool outputs are shown in the chat as a preview limited to the first 4000 characters. Truncated results link to `/conversations/{id}/tool-results/{message_id}` which returns the full output.
+
 ## Skills
 
-See  for the joke-telling workflow.
+Reusable agent workflows live as Markdown files under `skills/` (e.g. `skills/讲笑话.md` for the joke-telling flow). The agent reads the relevant skill file before executing a workflow it has not memorized.
