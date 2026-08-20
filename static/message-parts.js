@@ -2,6 +2,29 @@
 // 依赖：markdown.js（escapeHtml, renderAnswer via dom-utils.js）
 // 依赖：dom-utils.js（assistantParts, lastPart, renderAnswer, collapseReasoning, scheduleScrollToBottom）
 
+const pendingAnswerRenders = new Map();
+
+function scheduleAnswerRender(messageId, item) {
+  if (pendingAnswerRenders.has(messageId)) return;
+  const frame = requestAnimationFrame(() => {
+    pendingAnswerRenders.delete(messageId);
+    renderAnswer(item);
+    scheduleScrollToBottom();
+    collapseReasoning(messageId);
+  });
+  pendingAnswerRenders.set(messageId, frame);
+}
+
+function flushAnswerRender(messageId) {
+  const frame = pendingAnswerRenders.get(messageId);
+  if (frame) {
+    cancelAnimationFrame(frame);
+    pendingAnswerRenders.delete(messageId);
+  }
+  const item = lastPart(messageId, "answer");
+  if (item) renderAnswer(item);
+}
+
 function appendReasoningDelta(messageId, delta) {
   const parts = assistantParts(messageId);
   if (!parts) return;
@@ -94,9 +117,7 @@ function appendAnswerDelta(messageId, delta) {
     item.dataset.raw = item.textContent || "";
   }
   item.dataset.raw += delta;
-  renderAnswer(item);
-  scheduleScrollToBottom();
-  collapseReasoning(messageId);
+  scheduleAnswerRender(messageId, item);
 }
 
 function appendToolMessage(messageId, message) {
@@ -109,17 +130,21 @@ function appendToolMessage(messageId, message) {
   article.className = "message tool-message inline-tool-message tool-result-message";
   article.dataset.partType = "tool-result";
   article.dataset.toolCallId = message.tool_call_id || "";
-  const transfer = transferredFileFromToolResult(message.result);
+  const transfer = message.transfer || transferredFileFromToolResult(message.result);
+  const resultText = message.result_preview ?? formatToolValue(message.result);
+  const resultUrl = message.result_url || "";
+  const resultSize = Number(message.result_size_chars) || 0;
   article.innerHTML = `
     <div class="tool-card">
       <div class="tool-card-header">
         <span>工具返回 · ${escapeHtml(message.name || "tool")}</span>
         <span class="message-status ${escapeHtml(message.status || "")}">${escapeHtml(message.status || "")}</span>
       </div>
-      ${transfer ? transferredFileHtml(transfer.file) : ""}
+      ${transfer ? transferHtml(transfer) : ""}
       <details>
-        <summary>查看返回结果</summary>
-        <pre>${escapeHtml(formatToolValue(message.result))}</pre>
+        <summary>查看返回结果${resultSize ? ` <span class="tool-result-size">${resultSize.toLocaleString("zh-CN")} 字符</span>` : ""}</summary>
+        <pre class="tool-result-content">${escapeHtml(resultText)}</pre>
+        ${resultUrl ? `<button class="tool-result-load" type="button" data-tool-result-url="${escapeHtml(resultUrl)}">加载完整结果</button>` : ""}
       </details>
     </div>
   `;
@@ -167,10 +192,14 @@ function syncAssistantSnapshot(messageId, message) {
 
     if (part.type === "tool") {
       appendToolMessage(messageId, {
-        tool_call_id: part.tool_message_id,
+        tool_call_id: part.tool_call_id || part.tool_message_id,
         name: part.name,
         status: part.status,
         result: part.result,
+        result_preview: part.result_preview,
+        result_size_chars: part.result_size_chars,
+        result_url: part.result_url,
+        transfer: part.transfer,
       });
     }
   }
@@ -196,6 +225,40 @@ function transferredFileFromToolResult(result) {
   if (!result || result.ok !== true || !result.result) return null;
   return result.result.type === "transferred_file" ? result.result : null;
 }
+
+function transferHtml(transfer) {
+  if (!transfer) return "";
+  if (transfer.type === "user_question") return questionCardHtml(transfer);
+  if (transfer.type === "transferred_file") return transferredFileHtml(transfer.file);
+  return "";
+}
+
+function questionCardHtml(transfer) {
+  const options = Array.isArray(transfer.options) ? transfer.options : [];
+  const buttons = options
+    .map(
+      (option) => `
+      <button type="button" class="question-option" data-option="${escapeHtml(option)}">${escapeHtml(option)}</button>`
+    )
+    .join("");
+  const hint = transfer.allow_custom === false ? "请从上方选项中选择" : "点击选项，或直接输入你的回答";
+  return `
+    <div class="user-question-card">
+      <div class="user-question-text">${escapeHtml(transfer.question || "")}</div>
+      ${buttons ? `<div class="user-question-options">${buttons}</div>` : ""}
+      <div class="user-question-hint">${escapeHtml(hint)}</div>
+    </div>
+  `;
+}
+
+document.addEventListener("click", (event) => {
+  const optionButton = event.target.closest(".question-option");
+  if (!optionButton || !textarea) return;
+  textarea.value = optionButton.dataset.option || optionButton.textContent || "";
+  if (typeof autoResizeTextarea === "function") autoResizeTextarea();
+  if (!textarea.disabled) textarea.focus();
+  scheduleScrollToBottom();
+});
 
 function transferredFileHtml(file) {
   if (!file) return "";

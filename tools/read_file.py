@@ -11,16 +11,16 @@ TOOL_DEFINITION = {
     "function": {
         "name": "read_file",
         "description": (
-            "Read a text file from the CuteHarness workspace. The path must be relative. "
+            "Read a text file on the local machine. Absolute paths are allowed; relative paths "
+            "are resolved from the CuteHarness root directory (the folder that contains workspace/ "
+            "and data/), so files in the workspace folder need the 'workspace/' prefix, "
+            "e.g. 'workspace/foo.txt'. "
             "Use start_line and end_line for large files; line numbers are 1-based and inclusive."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "Relative path to a text file inside the CuteHarness workspace.",
-                },
+                "file_path": {"type": "string", "description": "Absolute path, or a path relative to the CuteHarness root directory; files in the workspace folder need the 'workspace/' prefix, e.g. 'workspace/foo.txt'."},
                 "start_line": {
                     "type": "integer",
                     "description": "First line to return, 1-based. Defaults to 1.",
@@ -60,8 +60,8 @@ def run(
 
     start_line = int(start_line)
     end_line = int(end_line) if end_line is not None else None
-    max_chars = int(max_chars)
-    path = resolve_workspace_file(context.base_dir, file_path)
+    max_chars = min(int(max_chars), MAX_TOOL_OUTPUT_CHARS)
+    path = resolve_workspace_file(context.base_dir, file_path, allow_outside=True)
     raw = path.read_bytes()
     if b"\x00" in raw[:8192]:
         raise ValueError(f"Binary files are not supported: {file_path}")

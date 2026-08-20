@@ -13,11 +13,14 @@ TOOL_DEFINITION = {
     "function": {
         "name": "apply_patch",
         "description": (
-            "Apply a structured patch to files inside the CuteHarness workspace. "
+            "Apply a structured patch to local files. Absolute paths are allowed; relative paths "
+            "are resolved from the CuteHarness root directory (the folder that contains workspace/ "
+            "and data/), so files in the workspace folder need the 'workspace/' prefix, "
+            "e.g. '*** Add File: workspace/foo.txt'. "
             "Use the format starting with '*** Begin Patch' and ending with '*** End Patch'. "
             "It supports '*** Add File:', '*** Update File:', and '*** Delete File:' operations. "
             "Update hunks use context lines prefixed with a space, removed lines with '-', "
-            "and added lines with '+'. Paths must be relative."
+            "and added lines with '+'."
         ),
         "parameters": {
             "type": "object",
@@ -153,14 +156,9 @@ def _prepare_operation(base_dir: Path, operation: PatchOperation) -> PreparedOpe
 
 
 def _resolve_target(base_dir: Path, raw_path: str) -> Path:
-    candidate = Path(raw_path.strip())
-    if candidate.is_absolute():
-        raise ValueError("path must be relative to the CuteHarness workspace; absolute paths are not allowed")
+    candidate = Path(raw_path.strip()).expanduser()
     base = base_dir.resolve()
-    resolved = (base / candidate).resolve()
-    if resolved != base and base not in resolved.parents:
-        raise ValueError("Only files inside the CuteHarness workspace can be accessed")
-    return resolved
+    return (candidate if candidate.is_absolute() else base / candidate).resolve()
 
 
 def _parse_added_file(body: tuple[str, ...], file_path: str) -> str:

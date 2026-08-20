@@ -1,11 +1,18 @@
+import copy
 import json
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from app.atomic_io import write_json_atomic
+from app.tool_output import model_tool_content
+
+
+PERSIST_INTERVAL_SECONDS = 0.25
+PERSIST_CHAR_THRESHOLD = 4096
 
 
 class TaskStore:
@@ -14,6 +21,10 @@ class TaskStore:
         self.lock = threading.Lock()
         self.dir.mkdir(parents=True, exist_ok=True)
         self._next_seq = self._compute_next_seq()
+        self._cache: dict[str, dict[str, Any]] = {}
+        self._pending_chars: dict[str, int] = {}
+        self._last_persisted_at: dict[str, float] = {}
+        self._flush_timers: dict[str, threading.Timer] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -46,6 +57,8 @@ class TaskStore:
             "created_at": now,
             "updated_at": now,
             "status": "queued",
+            "tools_compressed": False,
+            "tool_compression_boundary_id": "",
             "messages": [
                 new_message("user", prompt, "succeeded"),
                 new_message("assistant", "", "queued"),
@@ -108,7 +121,7 @@ class TaskStore:
             append_text_part(message, "reasoning", text)
             message["updated_at"] = utc_now()
             conversation["updated_at"] = message["updated_at"]
-            self._write_one(conversation)
+            self._write_one_deferred(conversation, len(text))
             return message
 
     def append_answer(self, conversation_id: str, message_id: str, text: str) -> dict[str, Any]:
@@ -119,7 +132,7 @@ class TaskStore:
             append_text_part(message, "answer", text)
             message["updated_at"] = utc_now()
             conversation["updated_at"] = message["updated_at"]
-            self._write_one(conversation)
+            self._write_one_deferred(conversation, len(text))
             return message
 
     def attach_dingding_result(
@@ -162,7 +175,7 @@ class TaskStore:
         with self.lock:
             conversation = self._read_one_or_raise(conversation_id)
             assistant = self._find_message(conversation, assistant_message_id)
-            message = new_message("tool", json.dumps(result, ensure_ascii=False), status)
+            message = new_message("tool", model_tool_content(result), status)
             message["tool_call_id"] = tool_call_id
             message["name"] = name
             message["arguments"] = arguments
@@ -196,6 +209,9 @@ class TaskStore:
             raise KeyError(f"Conversation not found: {conversation_id}")
 
         messages = []
+        compression_boundary_id = conversation.get("tool_compression_boundary_id", "")
+        compression_active = bool(conversation.get("tools_compressed", False) and compression_boundary_id)
+
         api_tool_call_ids = {
             item.get("tool_call_id")
             for message in conversation["messages"]
@@ -205,6 +221,11 @@ class TaskStore:
         for message in conversation["messages"]:
             if message["id"] == through_message_id:
                 break
+            if compression_active:
+                messages.extend(compressed_model_messages(message))
+                if message["id"] == compression_boundary_id:
+                    compression_active = False
+                continue
             role = message["role"]
             if role not in {"user", "assistant", "tool"}:
                 continue
@@ -259,13 +280,25 @@ class TaskStore:
     def _write_file(self, seq: int, conversation: dict[str, Any]) -> None:
         path = self.dir / f"{seq:06d}-{conversation['id']}.json"
         write_json_atomic(path, conversation)
+        timer = self._flush_timers.pop(conversation["id"], None)
+        if timer and timer is not threading.current_thread():
+            timer.cancel()
+        self._cache[conversation["id"]] = copy.deepcopy(conversation)
+        self._pending_chars.pop(conversation["id"], None)
+        self._last_persisted_at[conversation["id"]] = time.monotonic()
 
     def _read_one(self, conversation_id: str) -> dict[str, Any] | None:
+        cached = self._cache.get(conversation_id)
+        if cached is not None:
+            return copy.deepcopy(cached)
         path = self._conversation_path(conversation_id)
         if not path:
             return None
         try:
-            return normalize_conversation(json.loads(path.read_text(encoding="utf-8")))
+            conversation = normalize_conversation(json.loads(path.read_text(encoding="utf-8")))
+            self._cache[conversation_id] = copy.deepcopy(conversation)
+            self._last_persisted_at[conversation_id] = time.monotonic()
+            return copy.deepcopy(conversation)
         except (json.JSONDecodeError, OSError):
             return None
 
@@ -280,6 +313,33 @@ class TaskStore:
         if not path:
             raise KeyError(f"Conversation file not found for: {conversation['id']}")
         write_json_atomic(path, conversation)
+        timer = self._flush_timers.pop(conversation["id"], None)
+        if timer and timer is not threading.current_thread():
+            timer.cancel()
+        self._cache[conversation["id"]] = copy.deepcopy(conversation)
+        self._pending_chars.pop(conversation["id"], None)
+        self._last_persisted_at[conversation["id"]] = time.monotonic()
+
+    def _write_one_deferred(self, conversation: dict[str, Any], changed_chars: int) -> None:
+        conversation_id = conversation["id"]
+        self._cache[conversation_id] = copy.deepcopy(conversation)
+        self._pending_chars[conversation_id] = self._pending_chars.get(conversation_id, 0) + changed_chars
+        elapsed = time.monotonic() - self._last_persisted_at.get(conversation_id, 0)
+        if elapsed >= PERSIST_INTERVAL_SECONDS or self._pending_chars[conversation_id] >= PERSIST_CHAR_THRESHOLD:
+            self._write_one(conversation)
+            return
+        if conversation_id not in self._flush_timers:
+            timer = threading.Timer(PERSIST_INTERVAL_SECONDS, self._flush_pending, args=(conversation_id,))
+            timer.daemon = True
+            self._flush_timers[conversation_id] = timer
+            timer.start()
+
+    def _flush_pending(self, conversation_id: str) -> None:
+        with self.lock:
+            self._flush_timers.pop(conversation_id, None)
+            conversation = self._cache.get(conversation_id)
+            if conversation is not None and self._pending_chars.get(conversation_id, 0):
+                self._write_one(conversation)
 
     def _read_all(self) -> list[dict[str, Any]]:
         conversations = []
@@ -303,6 +363,13 @@ def normalize_conversation(item: dict[str, Any]) -> dict[str, Any]:
         item.setdefault("title", title_from_prompt(first_user_content(item)))
         item.setdefault("dingding_results", [])
         item.setdefault("error", "")
+        item.setdefault("tools_compressed", False)
+        item.setdefault("tool_compression_boundary_id", "")
+        # Older versions stored only a permanent boolean. The exact checkpoint
+        # cannot be reconstructed, so start those conversations uncompressed
+        # and let the next click establish a precise boundary.
+        if item["tools_compressed"] and not item["tool_compression_boundary_id"]:
+            item["tools_compressed"] = False
         item.setdefault("status", infer_status(item["messages"]))
         for message in item["messages"]:
             normalize_message(message)
@@ -343,6 +410,8 @@ def normalize_conversation(item: dict[str, Any]) -> dict[str, Any]:
         "created_at": now,
         "updated_at": item.get("updated_at", now),
         "status": item.get("status", "succeeded"),
+        "tools_compressed": False,
+        "tool_compression_boundary_id": "",
         "messages": messages,
         "dingding_results": [
             {"message_id": f"{item['id']}-assistant", "result": item["dingding_result"], "created_at": now}
@@ -397,6 +466,28 @@ def model_message_from_stored(message: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
+def compressed_model_messages(message: dict[str, Any]) -> list[dict[str, Any]]:
+    role = message.get("role")
+    if role == "user":
+        content = message.get("content", "") or ""
+        return [{"role": "user", "content": content}]
+    if role != "assistant":
+        return []
+
+    api_messages = message.get("api_messages") or []
+    if api_messages:
+        result = [
+            {"role": "assistant", "content": api_message.get("content", "") or ""}
+            for api_message in api_messages
+            if api_message.get("role") == "assistant" and (api_message.get("content", "") or "").strip()
+        ]
+        if result:
+            return result
+
+    content = message.get("content", "") or ""
+    return [{"role": "assistant", "content": content}] if content.strip() else []
+
+
 def append_text_part(message: dict[str, Any], kind: str, text: str) -> None:
     parts = message.setdefault("parts", [])
     if parts and parts[-1].get("type") == kind:
@@ -410,6 +501,7 @@ def append_tool_part(assistant: dict[str, Any], tool_message: dict[str, Any]) ->
         {
             "type": "tool",
             "tool_message_id": tool_message["id"],
+            "tool_call_id": tool_message.get("tool_call_id", ""),
             "name": tool_message.get("name", ""),
             "status": tool_message.get("status", ""),
             "arguments": tool_message.get("arguments", {}),

@@ -1,0 +1,132 @@
+{% macro render_tool_result(tool) -%}
+  <details>
+    <summary>
+      查看返回结果
+      {% if tool.result_size_chars %}<span class="tool-result-size">{{ "{:,}".format(tool.result_size_chars) }} 字符</span>{% endif %}
+    </summary>
+    <pre class="tool-result-content">{{ tool.result_preview if tool.result_preview is defined else (tool.result | tojson(indent=2)) }}</pre>
+    {% if tool.result_url %}
+      <button class="tool-result-load" type="button" data-tool-result-url="{{ tool.result_url }}">加载完整结果</button>
+    {% endif %}
+  </details>
+{%- endmacro %}
+
+{% macro render_message(message) -%}
+  {% if message.role == "user" %}
+    <article class="message user-message">
+      <div class="user-message-stack">
+        <div class="message-bubble">{{ message.content }}</div>
+        {% if message.attachments %}
+          <div class="upload-attachments">
+            {% for attachment in message.attachments %}
+              {% if attachment.is_image %}
+                <a class="upload-image-link" href="{{ attachment.url }}" target="_blank" rel="noopener">
+                  <img src="{{ attachment.url }}" alt="{{ attachment.name }}">
+                </a>
+              {% else %}
+                <a class="upload-download" href="{{ attachment.url }}" download>
+                  <span class="upload-file-name">{{ attachment.name }}</span>
+                  <span class="upload-file-meta">{{ attachment.mime_type }} · {{ attachment.size_bytes }} bytes</span>
+                  <span class="upload-file-path">{{ attachment.path }}</span>
+                </a>
+              {% endif %}
+            {% endfor %}
+          </div>
+        {% endif %}
+      </div>
+    </article>
+  {% elif message.role == "assistant" %}
+    <article class="message assistant-message" data-message-id="{{ message.id }}">
+      <div class="assistant-avatar"><img src="/static/avatar/{{ range(1, 5) | random }}.png?v={{ static_v }}" alt="AI"></div>
+      <div class="assistant-body">
+        <div class="assistant-status-row">
+          <span class="message-status {{ message.status }}">{{ message.status }}</span>
+        </div>
+        <div class="assistant-parts" id="parts-{{ message.id }}">
+          {% if message.tool_calls %}
+            {% for tool_call in message.tool_calls %}
+              <article class="message tool-message inline-tool-message tool-call-message" data-part-type="tool-call" data-tool-call-id="{{ tool_call.id }}">
+                <div class="tool-card">
+                  <div class="tool-card-header">
+                    <span>工具调用 · {{ tool_call.function.name }}</span>
+                    <span class="message-status succeeded">已发出</span>
+                  </div>
+                  <details>
+                    <summary>调用参数</summary>
+                    <pre>{{ tool_call.function.arguments }}</pre>
+                  </details>
+                </div>
+              </article>
+            {% endfor %}
+          {% endif %}
+          {% if message.parts %}
+            {% for part in message.parts %}
+              {% if part.type == "reasoning" %}
+                <details class="reasoning" {% if loop.last and message.status in ["queued", "running"] %}open{% endif %}>
+                  <summary>Thinking</summary>
+                  <pre>{{ part.content }}</pre>
+                </details>
+              {% elif part.type == "answer" %}
+                <div class="answer markdown-body">{{ part.content }}</div>
+              {% elif part.type == "tool" %}
+                <article class="message tool-message inline-tool-message tool-result-message" data-part-type="tool-result" data-tool-call-id="{{ part.tool_call_id or part.tool_message_id }}">
+                  <div class="tool-card">
+                    <div class="tool-card-header">
+                      <span>工具返回 · {{ part.name }}</span>
+                      <span class="message-status {{ part.status }}">{{ part.status }}</span>
+                    </div>
+                    {% if part.transfer %}
+                      {% if part.transfer.type == "user_question" %}
+                        <div class="user-question-card">
+                          <div class="user-question-text">{{ part.transfer.question }}</div>
+                          {% if part.transfer.options %}
+                            <div class="user-question-options">
+                              {% for option in part.transfer.options %}
+                                <button type="button" class="question-option" data-option="{{ option }}">{{ option }}</button>
+                              {% endfor %}
+                            </div>
+                          {% endif %}
+                          <div class="user-question-hint">{{ "请从上方选项中选择" if not part.transfer.allow_custom else "点击选项，或直接输入你的回答" }}</div>
+                        </div>
+                      {% else %}
+                        <div class="transferred-file">
+                          {% if part.transfer.file.is_image %}
+                            <a class="transferred-image-link" href="{{ part.transfer.file.url }}" target="_blank" rel="noopener">
+                              <img src="{{ part.transfer.file.url }}" alt="{{ part.transfer.file.name }}">
+                            </a>
+                          {% else %}
+                            <a class="transferred-download" href="{{ part.transfer.file.url }}" download>
+                              <span class="transferred-file-name">{{ part.transfer.file.name }}</span>
+                              <span class="transferred-file-meta">{{ part.transfer.file.mime_type }} · {{ part.transfer.file.size_bytes }} bytes</span>
+                            </a>
+                          {% endif %}
+                        </div>
+                      {% endif %}
+                    {% endif %}
+                    {{ render_tool_result(part) }}
+                  </div>
+                </article>
+              {% endif %}
+            {% endfor %}
+          {% elif message.reasoning_content or message.content %}
+            <details class="reasoning" {% if message.status in ["queued", "running"] %}open{% endif %}>
+              <summary>思考过程 <span class="message-status {{ message.status }}">{{ message.status }}</span></summary>
+              <pre>{{ message.reasoning_content }}</pre>
+            </details>
+            <div class="answer markdown-body">{{ message.content }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </article>
+  {% elif message.role == "tool" and not message.inline_rendered %}
+    <article class="message tool-message tool-result-message" data-part-type="tool-result" data-tool-call-id="{{ message.tool_call_id }}">
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <span>工具返回 · {{ message.name }}</span>
+          <span class="message-status {{ message.status }}">{{ message.status }}</span>
+        </div>
+        {{ render_tool_result(message) }}
+      </div>
+    </article>
+  {% endif %}
+{%- endmacro %}

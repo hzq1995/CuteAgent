@@ -1,6 +1,5 @@
 .env
 .tmp
-.cuteharness-logs/
 tests/
 __pycache__/
 *.pyc
@@ -12,7 +11,12 @@ data/scheduled_tasks.json
 data/settings.json
 data/memories.json
 data/
-.vscode/
-utils/sync_files.py
-docs/
+
+# runtime junk
+server.log
+*.log
+.codex-backups/
+.cuteharness-logs/
+.ipynb_checkpoints/
 workspace/
+test_send.txt

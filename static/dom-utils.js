@@ -324,6 +324,32 @@ function ensureMessageList(prompt) {
   return messageList;
 }
 
+function initToolResultLoading() {
+  if (document.body.dataset.toolResultLoadingReady === "true") return;
+  document.body.dataset.toolResultLoadingReady = "true";
+  document.addEventListener("click", async (event) => {
+    const button = event.target.closest(".tool-result-load");
+    if (!button || button.dataset.loading === "true") return;
+    const target = button.closest("details")?.querySelector(".tool-result-content");
+    const url = button.dataset.toolResultUrl;
+    if (!target || !url) return;
+    button.dataset.loading = "true";
+    button.disabled = true;
+    button.textContent = "加载中…";
+    try {
+      const response = await fetch(url, { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      target.textContent = formatToolValue(payload.result);
+      button.remove();
+    } catch (error) {
+      button.dataset.loading = "false";
+      button.disabled = false;
+      button.textContent = "加载失败，重试";
+    }
+  });
+}
+
 function ensureContextTokenEstimate() {
   if (document.getElementById("context-token-estimate")) return;
   const composerWrap = document.querySelector(".composer-wrap");

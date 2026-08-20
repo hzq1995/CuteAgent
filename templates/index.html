@@ -1,3 +1,4 @@
+{% from "_message.html" import render_message %}
 <!doctype html>
 <html lang="zh-CN">
   <head>
@@ -20,135 +21,12 @@
             </div>
 
             <div class="message-list" id="message-list">
-              {% for message in conversation.messages %}
-                {% if message.role == "user" %}
-                  <article class="message user-message">
-                    <div class="user-message-stack">
-                      <div class="message-bubble">{{ message.content }}</div>
-                      {% if message.attachments %}
-                        <div class="upload-attachments">
-                          {% for attachment in message.attachments %}
-                            {% if attachment.is_image %}
-                              <a class="upload-image-link" href="{{ attachment.url }}" target="_blank" rel="noopener">
-                                <img src="{{ attachment.url }}" alt="{{ attachment.name }}">
-                              </a>
-                            {% else %}
-                              <a class="upload-download" href="{{ attachment.url }}" download>
-                                <span class="upload-file-name">{{ attachment.name }}</span>
-                                <span class="upload-file-meta">{{ attachment.mime_type }} · {{ attachment.size_bytes }} bytes</span>
-                                <span class="upload-file-path">{{ attachment.path }}</span>
-                              </a>
-                            {% endif %}
-                          {% endfor %}
-                        </div>
-                      {% endif %}
-                    </div>
-                  </article>
-                {% elif message.role == "assistant" %}
-                  <article class="message assistant-message" data-message-id="{{ message.id }}">
-                    <div class="assistant-avatar"><img src="/static/avatar/{{ range(1, 5) | random }}.png?v={{ static_v }}" alt="AI"></div>
-                    <div class="assistant-body">
-                      <div class="assistant-status-row">
-                        <span class="message-status {{ message.status }}">{{ message.status }}</span>
-                      </div>
-                      <div class="assistant-parts" id="parts-{{ message.id }}">
-                        {% if message.tool_calls %}
-                          {% for tool_call in message.tool_calls %}
-                            <article class="message tool-message inline-tool-message tool-call-message" data-part-type="tool-call" data-tool-call-id="{{ tool_call.id }}">
-                              <div class="tool-card">
-                                <div class="tool-card-header">
-                                  <span>工具调用 · {{ tool_call.function.name }}</span>
-                                  <span class="message-status succeeded">已发出</span>
-                                </div>
-                                <details>
-                                  <summary>调用参数</summary>
-                                  <pre>{{ tool_call.function.arguments }}</pre>
-                                </details>
-                              </div>
-                            </article>
-                          {% endfor %}
-                        {% endif %}
-                        {% if message.parts %}
-                          {% for part in message.parts %}
-                            {% if part.type == "reasoning" %}
-                              <details class="reasoning" {% if loop.last and message.status in ["queued", "running"] %}open{% endif %}>
-                                <summary>Thinking</summary>
-                                <pre>{{ part.content }}</pre>
-                              </details>
-                            {% elif part.type == "answer" %}
-                              <div class="answer markdown-body">{{ part.content }}</div>
-                            {% elif part.type == "tool" %}
-                              <article class="message tool-message inline-tool-message tool-result-message" data-part-type="tool-result" data-tool-call-id="{{ part.tool_message_id }}">
-                                <div class="tool-card">
-                                  <div class="tool-card-header">
-                                    <span>工具返回 · {{ part.name }}</span>
-                                    <span class="message-status {{ part.status }}">{{ part.status }}</span>
-                                  </div>
-                                  {% set transfer = part.result.result if part.result and part.result.ok and part.result.result and part.result.result.type == "transferred_file" else none %}
-                                  {% if transfer %}
-                                    <div class="transferred-file">
-                                      {% if transfer.file.is_image %}
-                                        <a class="transferred-image-link" href="{{ transfer.file.url }}" target="_blank" rel="noopener">
-                                          <img src="{{ transfer.file.url }}" alt="{{ transfer.file.name }}">
-                                        </a>
-                                      {% else %}
-                                        <a class="transferred-download" href="{{ transfer.file.url }}" download>
-                                          <span class="transferred-file-name">{{ transfer.file.name }}</span>
-                                          <span class="transferred-file-meta">{{ transfer.file.mime_type }} · {{ transfer.file.size_bytes }} bytes</span>
-                                        </a>
-                                      {% endif %}
-                                    </div>
-                                  {% endif %}
-                                  <details>
-                                    <summary>查看返回结果</summary>
-                                    <pre>{{ part.result | tojson(indent=2) }}</pre>
-                                  </details>
-                                </div>
-                              </article>
-                            {% endif %}
-                          {% endfor %}
-                        {% else %}
-                          {% if message.reasoning_content or message.content %}
-                      <details class="reasoning" {% if message.status in ["queued", "running"] %}open{% endif %}>
-                        <summary>思考过程 <span class="message-status {{ message.status }}">{{ message.status }}</span></summary>
-                        <pre>{{ message.reasoning_content }}</pre>
-                      </details>
-                      <div class="answer markdown-body">{{ message.content }}</div>
-                          {% endif %}
-                        {% endif %}
-                      </div>
-                    </div>
-                  </article>
-                {% elif message.role == "tool" and not message.inline_rendered %}
-                  <article class="message tool-message tool-result-message" data-part-type="tool-result" data-tool-call-id="{{ message.tool_call_id }}">
-                    <div class="tool-card">
-                      <div class="tool-card-header">
-                        <span>工具返回 · {{ message.name }}</span>
-                        <span class="message-status {{ message.status }}">{{ message.status }}</span>
-                      </div>
-                      {% set transfer = message.result.result if message.result and message.result.ok and message.result.result and message.result.result.type == "transferred_file" else none %}
-                      {% if transfer %}
-                        <div class="transferred-file">
-                          {% if transfer.file.is_image %}
-                            <a class="transferred-image-link" href="{{ transfer.file.url }}" target="_blank" rel="noopener">
-                              <img src="{{ transfer.file.url }}" alt="{{ transfer.file.name }}">
-                            </a>
-                          {% else %}
-                            <a class="transferred-download" href="{{ transfer.file.url }}" download>
-                              <span class="transferred-file-name">{{ transfer.file.name }}</span>
-                              <span class="transferred-file-meta">{{ transfer.file.mime_type }} · {{ transfer.file.size_bytes }} bytes</span>
-                            </a>
-                          {% endif %}
-                        </div>
-                      {% endif %}
-                      <details>
-                        <summary>查看返回结果</summary>
-                        <pre>{{ message.result | tojson(indent=2) }}</pre>
-                      </details>
-                    </div>
-                  </article>
-                {% endif %}
-              {% endfor %}
+              {% if history_has_more %}
+                <div class="history-loader" id="history-loader">
+                  <button type="button" class="history-load-button" data-before-id="{{ history_before_id }}">加载更早消息</button>
+                </div>
+              {% endif %}
+              {% for message in conversation.messages %}{{ render_message(message) }}{% endfor %}
             </div>
           {% else %}
             <div class="empty-state">
@@ -167,6 +45,7 @@
             action="{% if conversation %}/conversations/{{ conversation.id }}/messages{% else %}/conversations{% endif %}"
             enctype="multipart/form-data"
             data-conversation-id="{% if conversation %}{{ conversation.id }}{% endif %}"
+            data-tools-compressed="{{ 'true' if tools_compressed else 'false' }}"
           >
             <div class="composer-main">
               <div class="selected-files" id="selected-files" aria-live="polite"></div>
@@ -179,7 +58,19 @@
             </div>
             <div class="composer-actions">
               <input id="composer-files" name="files" type="file" multiple {% if is_running %}disabled{% endif %}>
-              <button class="file-button" type="button" aria-label="Attach files" title="Attach files" {% if is_running %}disabled{% endif %}>+</button>
+              <div class="composer-menu-wrap">
+                <button class="file-button menu-toggle" type="button" aria-label="更多操作" title="更多操作" aria-haspopup="menu" aria-expanded="false" {% if is_running %}disabled{% endif %}>+</button>
+                <div class="composer-menu" role="menu" hidden>
+                  <button class="composer-menu-item upload-menu-item" type="button" role="menuitem">上传文件</button>
+                  <button
+                    class="composer-menu-item compress-menu-item"
+                    id="compress-conversation"
+                    type="button"
+                    role="menuitem"
+                    {% if not conversation or is_running %}disabled{% endif %}
+                  >{{ '再次压缩' if tools_compressed else '压缩对话' }}</button>
+                </div>
+              </div>
               <button class="action-button{% if is_running %} stop-button{% endif %}" type="{% if is_running %}button{% else %}submit{% endif %}">{% if is_running %}&#20572;&#27490;{% else %}&#21457;&#36865;{% endif %}</button>
             </div>
           </form>
@@ -202,27 +93,74 @@
       const button = document.querySelector(".composer .action-button");
       const fileInput = document.getElementById("composer-files");
       const fileButton = document.querySelector(".composer .file-button");
+      const composerMenu = document.querySelector(".composer-menu");
+      const uploadButton = document.querySelector(".upload-menu-item");
+      const compressButton = document.getElementById("compress-conversation");
       const selectedFiles = document.getElementById("selected-files");
       let messageList = document.getElementById("message-list");
       const originalButtonText = button ? button.textContent : "";
       let currentSource = null;
 
-      // 初始化已有消息的 data-part-type 标记
-      document.querySelectorAll(".assistant-parts").forEach((parts) => {
-        for (const child of parts.children) {
-          if (child.classList.contains("reasoning")) {
-            child.dataset.partType = "reasoning";
-          } else if (child.classList.contains("answer")) {
-            child.dataset.partType = "answer";
-          } else if (child.classList.contains("tool-call-message")) {
-            child.dataset.partType = "tool-call";
-          } else if (child.classList.contains("tool-result-message")) {
-            child.dataset.partType = "tool-result";
-          } else if (child.classList.contains("tool-message")) {
-            child.dataset.partType = "tool-result";
+      function initializeMessagePartTypes(root = document) {
+        root.querySelectorAll(".assistant-parts").forEach((parts) => {
+          for (const child of parts.children) {
+            if (child.classList.contains("reasoning")) {
+              child.dataset.partType = "reasoning";
+            } else if (child.classList.contains("answer")) {
+              child.dataset.partType = "answer";
+            } else if (child.classList.contains("tool-call-message")) {
+              child.dataset.partType = "tool-call";
+            } else if (child.classList.contains("tool-result-message")) {
+              child.dataset.partType = "tool-result";
+            } else if (child.classList.contains("tool-message")) {
+              child.dataset.partType = "tool-result";
+            }
           }
-        }
-      });
+        });
+      }
+
+      function initHistoryLoader() {
+        const loader = document.getElementById("history-loader");
+        if (!loader) return;
+        const loadButton = loader.querySelector("button");
+        if (!loadButton || loadButton.dataset.ready === "true") return;
+        loadButton.dataset.ready = "true";
+        loadButton.addEventListener("click", async () => {
+          if (loadButton.disabled) return;
+          loadButton.disabled = true;
+          loadButton.textContent = "加载中…";
+          const conversationId = form?.dataset.conversationId;
+          const beforeId = loadButton.dataset.beforeId;
+          try {
+            const response = await fetch(`/conversations/${conversationId}/history?before=${encodeURIComponent(beforeId)}&limit=30`, {
+              headers: { Accept: "application/json" },
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const payload = await response.json();
+            const template = document.createElement("template");
+            template.innerHTML = payload.html || "";
+            initializeMessagePartTypes(template.content);
+            const fragment = template.content;
+            const firstMessage = loader.nextSibling;
+            messageList.insertBefore(fragment, firstMessage || null);
+            messageList.querySelectorAll(".answer").forEach(renderAnswer);
+            if (payload.has_more) {
+              loadButton.dataset.beforeId = payload.before_id || "";
+              loadButton.disabled = false;
+              loadButton.textContent = "加载更早消息";
+            } else {
+              loader.remove();
+            }
+          } catch (error) {
+            loadButton.disabled = false;
+            loadButton.textContent = "加载失败，重试";
+          }
+        });
+      }
+
+      initializeMessagePartTypes();
+      initHistoryLoader();
+      initToolResultLoading();
 
       // 渲染已有的 answer 块并滚动到底。
       document.querySelectorAll(".answer").forEach(renderAnswer);

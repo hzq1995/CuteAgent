@@ -10,10 +10,10 @@ from typing import Any
 from app.memory_store import MemoryStore
 from app.scheduler_store import ScheduledTaskStore
 from app.storage import TaskStore
+from app.tool_output import MAX_TOOL_OUTPUT_CHARS
 
 
 BUSINESS_NOTICE_PREFIX = "[业务通知]"
-MAX_TOOL_OUTPUT_CHARS = 12000
 DEFAULT_TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
 
 
@@ -182,18 +182,24 @@ def truncate(value: str | bytes | None) -> str:
     return value[:MAX_TOOL_OUTPUT_CHARS] + "\n...[truncated]"
 
 
-def resolve_workspace_file(base_dir: Path, raw_path: str) -> Path:
+def resolve_workspace_file(
+    base_dir: Path,
+    raw_path: str,
+    *,
+    allow_outside: bool = False,
+) -> Path:
     if not raw_path or not raw_path.strip():
         raise ValueError("path is required")
 
     base = base_dir.resolve()
     candidate = Path(raw_path).expanduser()
-    if candidate.is_absolute():
+    if candidate.is_absolute() and not allow_outside:
         raise ValueError("path must be relative to the CuteHarness workspace; absolute paths are not allowed")
-    candidate = base / candidate
+    if not candidate.is_absolute():
+        candidate = base / candidate
     resolved = candidate.resolve()
 
-    if resolved != base and base not in resolved.parents:
+    if not allow_outside and resolved != base and base not in resolved.parents:
         raise ValueError("Only files inside the CuteHarness workspace can be accessed")
     if not resolved.exists():
         raise FileNotFoundError(f"File not found: {raw_path}")
@@ -202,19 +208,25 @@ def resolve_workspace_file(base_dir: Path, raw_path: str) -> Path:
     return resolved
 
 
-def resolve_workspace_path(base_dir: Path, raw_path: str) -> Path:
+def resolve_workspace_path(
+    base_dir: Path,
+    raw_path: str,
+    *,
+    allow_outside: bool = False,
+) -> Path:
     """Like resolve_workspace_file but accepts both files and directories."""
     if not raw_path or not raw_path.strip():
         raise ValueError("path is required")
 
     base = base_dir.resolve()
     candidate = Path(raw_path).expanduser()
-    if candidate.is_absolute():
+    if candidate.is_absolute() and not allow_outside:
         raise ValueError("path must be relative to the CuteHarness workspace; absolute paths are not allowed")
-    candidate = base / candidate
+    if not candidate.is_absolute():
+        candidate = base / candidate
     resolved = candidate.resolve()
 
-    if resolved != base and base not in resolved.parents:
+    if not allow_outside and resolved != base and base not in resolved.parents:
         raise ValueError("Only paths inside the CuteHarness workspace can be accessed")
     if not resolved.exists():
         raise FileNotFoundError(f"Path not found: {raw_path}")

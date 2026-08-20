@@ -9,6 +9,7 @@ function setComposerBusy(isBusy) {
   textarea.disabled = isBusy;
   if (typeof fileInput !== "undefined" && fileInput) fileInput.disabled = isBusy;
   if (typeof fileButton !== "undefined" && fileButton) fileButton.disabled = isBusy;
+  if (typeof uploadButton !== "undefined" && uploadButton) uploadButton.disabled = isBusy;
   if (isBusy) {
     const canStop = Boolean(activeConversationId());
     button.type = canStop ? "button" : "submit";
@@ -24,6 +25,30 @@ function setComposerBusy(isBusy) {
   }
   textarea.placeholder = isBusy ? "等待响应中..." : "发送消息给 CuteHarness";
   form.classList.toggle("disabled", isBusy);
+  updateCompressionButtonState();
+}
+
+function updateCompressionButtonState() {
+  if (typeof compressButton === "undefined" || !compressButton || !form) return;
+  const compressed = form.dataset.toolsCompressed === "true";
+  const hasConversation = Boolean(activeConversationId());
+  compressButton.disabled = !hasConversation || Boolean(textarea?.disabled);
+  compressButton.textContent = compressed ? "再次压缩" : "压缩对话";
+}
+
+function setComposerMenuOpen(isOpen) {
+  if (!composerMenu || !fileButton) return;
+  composerMenu.hidden = !isOpen;
+  fileButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
+}
+
+function showComposerNotice(message) {
+  if (!form) return;
+  document.querySelectorAll(".composer-notice").forEach((item) => item.remove());
+  const notice = document.createElement("p");
+  notice.className = "composer-notice";
+  notice.textContent = message;
+  form.insertAdjacentElement("afterend", notice);
 }
 
 function clearSubmitError() {
@@ -39,6 +64,7 @@ function setActiveConversationId(conversationId) {
       button.classList.add("stop-button");
       button.textContent = "\u505c\u6b62";
     }
+    updateCompressionButtonState();
   }
 }
 
@@ -122,6 +148,37 @@ async function stopCurrentConversation() {
   } catch (error) {
     showSubmitError(error.message);
     if (button) button.disabled = false;
+  }
+}
+
+async function compressCurrentConversation() {
+  const conversationId = activeConversationId();
+  if (!conversationId || !compressButton || compressButton.disabled) return;
+
+  clearSubmitError();
+  setComposerMenuOpen(false);
+  compressButton.disabled = true;
+  compressButton.textContent = "压缩中…";
+  try {
+    const response = await fetch(`/conversations/${conversationId}/compress`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+    });
+    if (!response.ok) throw new Error(await responseErrorMessage(response));
+    const payload = await response.json();
+    form.dataset.toolsCompressed = "true";
+    updateCompressionButtonState();
+    const estimate = document.getElementById("context-token-estimate");
+    if (estimate && typeof payload.estimated_tokens === "number") {
+      estimate.textContent = `上下文：约 ${payload.estimated_tokens.toLocaleString("zh-CN")} tokens`;
+    }
+    showComposerNotice("已压缩当前历史工具调用；之后新产生的工具调用会保留，直到再次压缩");
+  } catch (error) {
+    updateCompressionButtonState();
+    showSubmitError(error.message);
   }
 }
 
@@ -279,10 +336,34 @@ function initComposer() {
     addFiles(images);
   });
 
-  if (fileButton && fileInput) {
-    fileButton.addEventListener("click", () => fileInput.click());
+  if (fileButton && composerMenu) {
+    fileButton.addEventListener("click", () => {
+      if (fileButton.disabled) return;
+      setComposerMenuOpen(composerMenu.hidden);
+    });
+  }
+
+  if (uploadButton && fileInput) {
+    uploadButton.addEventListener("click", () => {
+      setComposerMenuOpen(false);
+      fileInput.click();
+    });
     fileInput.addEventListener("change", () => addFiles(fileInput.files));
   }
+
+  compressButton?.addEventListener("click", compressCurrentConversation);
+
+  document.addEventListener("click", (event) => {
+    if (!composerMenu?.hidden && !event.target.closest(".composer-menu-wrap")) {
+      setComposerMenuOpen(false);
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") setComposerMenuOpen(false);
+  });
+
+  updateCompressionButtonState();
 
   button?.addEventListener("click", (event) => {
     if (!textarea.disabled) return;

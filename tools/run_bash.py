@@ -14,12 +14,13 @@ TOOL_DEFINITION = {
     "function": {
         "name": "run_bash",
         "description": (
-            "Run a bash command in the CuteHarness workspace and return stdout, stderr, "
-            "exit code, and timeout status. Set background=true for a long-running command; "
-            "it starts immediately with output written to a log file instead of waiting for it. "
-            "Background mode is not a durable service supervisor; use an external service "
-            "manager for processes that must survive execution-environment cleanup. Do not "
-            "use nohup, setsid, or disown for durable services in the Pika execution environment."
+            "Run a bash command from the CuteHarness project root and return its output and exit status. "
+            "Run in the foreground by default. Set background=true only when the command should "
+            "keep running after this call returns, such as a dev server or watcher. Keep it false "
+            "for tests, builds, installs, scripts, or any command whose output or exit code is needed; "
+            "use timeout_seconds for slow commands. Background mode returns immediately with a PID "
+            "and log path; check the log with a later run_bash call. It is not a durable service manager. "
+            "Do not use nohup, setsid, or disown."
         ),
         "parameters": {
             "type": "object",
@@ -27,14 +28,15 @@ TOOL_DEFINITION = {
                 "command": {"type": "string", "description": "Bash command to execute."},
                 "timeout_seconds": {
                     "type": "integer",
-                    "description": "Maximum execution time in seconds before the process is killed. Capped by the global tool timeout setting. Default 60.",
+                    "description": "Foreground timeout in seconds. Increase this for slow commands when you need their result; ignored when background=true. Default 60.",
                     "default": 60,
                 },
                 "background": {
                     "type": "boolean",
                     "description": (
-                        "Start the command as a detached background process. Returns its PID and "
-                        "workspace-relative log file path; stdout and stderr are written to that log."
+                        "Return immediately while the command continues. Use true only for continuous "
+                        "processes such as a dev server or watcher. Keep false for tests, builds, installs, "
+                        "scripts, or commands whose output/exit code must be checked. If unsure, use false."
                     ),
                     "default": False,
                 },
@@ -65,9 +67,9 @@ def run(
     environment["PYTHONIOENCODING"] = "utf-8"
     environment["PYTHONUTF8"] = "1"
     process = subprocess.Popen(
-        ["bash", "-lc", command],
+        ["bash", "-l"],
         cwd=context.base_dir,
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -76,6 +78,7 @@ def run(
         env=environment,
         start_new_session=True,
     )
+    _send_command_over_stdin(process, command)
     try:
         while process.poll() is None:
             if context.is_cancelled():
@@ -121,6 +124,22 @@ def _has_unsupported_detach_command(command: str) -> bool:
             flags=re.IGNORECASE,
         )
     )
+
+
+def _send_command_over_stdin(process: subprocess.Popen, command: str) -> None:
+    """Keep command text out of bash argv so tools like `pkill -f` cannot match it."""
+    if process.stdin is None:
+        raise RuntimeError("bash stdin is unavailable")
+    stdin = process.stdin
+    try:
+        stdin.write(command)
+    except BrokenPipeError:
+        # A login profile may terminate bash before it starts reading the command.
+        pass
+    finally:
+        stdin.close()
+        # communicate() otherwise tries to flush the already-closed stream.
+        process.stdin = None
 
 
 def _terminate_process_tree(process: subprocess.Popen) -> None:
@@ -179,9 +198,9 @@ def _start_background_process(context: ToolContext, command: str) -> dict[str, A
         environment["PYTHONIOENCODING"] = "utf-8"
         environment["PYTHONUTF8"] = "1"
         process = subprocess.Popen(
-            ["bash", "-lc", command],
+            ["bash", "-l"],
             cwd=context.base_dir,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.PIPE,
             stdout=log_file,
             stderr=subprocess.STDOUT,
             text=True,
@@ -190,6 +209,7 @@ def _start_background_process(context: ToolContext, command: str) -> dict[str, A
             env=environment,
             start_new_session=True,
         )
+        _send_command_over_stdin(process, command)
 
     return {
         "background": True,

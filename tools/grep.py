@@ -12,9 +12,12 @@ TOOL_DEFINITION = {
     "function": {
         "name": "grep",
         "description": (
-            "Search file contents in the workspace with a regex. Returns matching files, "
+            "Search local file contents with a regex. Absolute paths are allowed; relative paths "
+            "are resolved from the CuteHarness root directory (the folder that contains workspace/ "
+            "and data/), so files in the workspace folder need the 'workspace/' prefix. "
+            "Returns matching files, "
             "or matching lines with line numbers, or per-file match counts. "
-            "Path must be relative to the workspace. Use this to locate code before edit_file, "
+            "Use this to locate code before edit_file, "
             "instead of parsing shell grep output."
         ),
         "parameters": {
@@ -26,7 +29,7 @@ TOOL_DEFINITION = {
                 },
                 "path": {
                     "type": "string",
-                    "description": "Relative file or directory to search. Defaults to the whole workspace.",
+                    "description": "Absolute file/directory path, or a path relative to the CuteHarness root directory. Defaults to the whole root directory.",
                 },
                 "glob": {
                     "type": "string",
@@ -79,7 +82,7 @@ def run(
         raise ValueError(f"invalid regex: {exc}") from exc
 
     limit = max(1, int(head_limit))
-    root = resolve_workspace_path(context.base_dir, path) if path else context.base_dir.resolve()
+    root = resolve_workspace_path(context.base_dir, path, allow_outside=True) if path else context.base_dir.resolve()
 
     files = _iter_files(root)
     if glob:

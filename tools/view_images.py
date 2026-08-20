@@ -16,8 +16,9 @@ TOOL_DEFINITION = {
         "description": (
             "Analyze one or more uploaded images with Xiaomi MiMo V2.5. "
             "Use this tool when the user message contains image paths and asks about their visual content. "
-            "image_paths must be workspace-relative paths copied from the user's uploaded files; "
-            "do not use absolute paths or invent paths. Return the visual analysis as text."
+            "image_paths must be paths relative to the CuteHarness root directory (copied verbatim "
+            "from the user's uploaded files, typically under 'data/uploads/...') or absolute paths "
+            "on the local machine; do not invent paths. Return the visual analysis as text."
         ),
         "parameters": {
             "type": "object",
@@ -28,9 +29,9 @@ TOOL_DEFINITION = {
                     "maxItems": MAX_IMAGES,
                     "items": {
                         "type": "string",
-                        "description": "Workspace-relative path of an uploaded image.",
+                        "description": "Path of an image, either relative to the CuteHarness root directory (e.g. 'data/uploads/.../photo.png') or an absolute path.",
                     },
-                    "description": f"One to {MAX_IMAGES} workspace-relative image paths.",
+                    "description": f"One to {MAX_IMAGES} image paths relative to the CuteHarness root directory, or absolute paths.",
                 },
                 "prompt": {
                     "type": "string",
@@ -59,7 +60,7 @@ def run(context: ToolContext, image_paths: list[str], prompt: str) -> str:
     for raw_path in image_paths:
         if not isinstance(raw_path, str) or not raw_path.strip():
             raise ValueError("image_paths must contain non-empty strings")
-        path = resolve_workspace_file(context.base_dir, raw_path)
+        path = resolve_workspace_file(context.base_dir, raw_path, allow_outside=True)
         mime_type = image_mime_type(path.name)
         if not mime_type:
             supported = ", ".join(sorted({".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"}))

@@ -18,7 +18,8 @@ TOOL_DEFINITION = {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": (
-                        "Optional relative file paths inside the CuteHarness workspace. "
+                        "Optional file paths relative to the CuteHarness root directory; "
+                        "files in the workspace folder need the 'workspace/' prefix, e.g. 'workspace/chart.png'. "
                         "Images are appended inline to the DingTalk markdown; other files are appended as links."
                     ),
                 },

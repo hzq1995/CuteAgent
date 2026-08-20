@@ -14,16 +14,18 @@ TOOL_DEFINITION = {
     "function": {
         "name": "send_file",
         "description": (
-            "Send a file from the CuteHarness workspace to the web page. "
-            "If the file is an image it will be shown inline; otherwise the page will show a download link. "
-            "The path must be relative to the CuteHarness workspace; absolute paths are not allowed."
+            "Send a file to the web page. If the file is an image it will be shown inline; "
+            "otherwise the page will show a download link. "
+            "Absolute paths are allowed; relative paths are resolved from the CuteHarness root "
+            "directory (the folder that contains workspace/ and data/), so files in the workspace "
+            "folder need the 'workspace/' prefix, e.g. 'workspace/photo.png'."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Relative path to a file inside the CuteHarness workspace. Do not use an absolute path.",
+                    "description": "Absolute path, or a path relative to the CuteHarness root directory; files in the workspace folder need the 'workspace/' prefix, e.g. 'workspace/photo.png'.",
                 },
                 "display_name": {
                     "type": "string",
@@ -37,7 +39,7 @@ TOOL_DEFINITION = {
 
 
 def run(context: ToolContext, path: str, display_name: str = "") -> dict[str, Any]:
-    source = resolve_workspace_file(context.base_dir, path)
+    source = resolve_workspace_file(context.base_dir, path, allow_outside=True)
     file_id = uuid4().hex
     filename = safe_filename(display_name or source.name)
     target_dir = context.base_dir / "data" / "shared_files" / file_id

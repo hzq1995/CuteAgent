@@ -11,17 +11,17 @@ TOOL_DEFINITION = {
     "function": {
         "name": "edit_file",
         "description": (
-            "Edit an existing file in the workspace by replacing an exact string. "
-            "Path must be relative. old_string must match verbatim; if not unique, set replace_all=true. "
+            "Edit an existing local file by replacing an exact string. Absolute paths are allowed; "
+            "relative paths are resolved from the CuteHarness root directory (the folder that contains "
+            "workspace/ and data/), so files in the workspace folder need the 'workspace/' prefix. "
+            "old_string must match verbatim; "
+            "if not unique, set replace_all=true. "
             "Use run_python to create new files."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "Relative path to the file inside the CuteHarness workspace.",
-                },
+                "file_path": {"type": "string", "description": "Absolute path, or a path relative to the CuteHarness root directory; files in the workspace folder need the 'workspace/' prefix, e.g. 'workspace/foo.txt'."},
                 "old_string": {
                     "type": "string",
                     "description": "The exact text to replace. Must match the file verbatim, including whitespace and newlines. Must be non-empty and differ from new_string.",
@@ -54,7 +54,7 @@ def run(
     if old_string == new_string:
         raise ValueError("new_string must differ from old_string")
 
-    target = resolve_workspace_file(context.base_dir, file_path)
+    target = resolve_workspace_file(context.base_dir, file_path, allow_outside=True)
 
     # newline="" preserves the original byte-level line endings so the match is
     # exact and unrelated lines are not rewritten.

@@ -34,6 +34,7 @@ class OpenAICompatibleClient:
             "model": self.model,
             "messages": messages,
             "stream": True,
+            "max_tokens": 100000,
             **self.request_options,
         }
         if tools:

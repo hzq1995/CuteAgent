@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import re
 import threading
@@ -26,6 +27,7 @@ from app.schedule_types import DEFAULT_TIMEZONE, ScheduleValidationError
 from app.scheduler_store import ScheduledTaskStore
 from app.storage import TaskStore
 from app.tool_settings import ToolSettingsStore
+from app.tool_output import model_tool_content, tool_result_preview
 
 
 settings = get_settings()
@@ -75,6 +77,8 @@ tool_settings_store = ToolSettingsStore(BASE_DIR / "data" / "tool_settings.json"
 memory_store = MemoryStore(BASE_DIR / "data" / "memories.json")
 SKILLS_DIR = BASE_DIR / "skills"
 CANCELLED_STATUS = "cancelled"
+CHAT_HISTORY_PAGE_SIZE = 30
+TOOL_CONTEXT_CACHE_SECONDS = 1.5
 SCHEDULED_TASK_PROMPT_PREFIX = (
     "[定时任务触发]\n"
     "这是一条由 CuteHarness 定时任务自动触发的消息。"
@@ -117,6 +121,7 @@ class ConversationRunRegistry:
 
 
 running_conversations = ConversationRunRegistry()
+context_token_cache: dict[str, tuple[float, int]] = {}
 
 
 def require_login(request: Request) -> None:
@@ -222,6 +227,85 @@ async def conversation_detail(conversation_id: str, request: Request):
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return render_chat(request, conversation=conversation)
+
+
+@app.post("/conversations/{conversation_id}/compress")
+async def compress_conversation(conversation_id: str, request: Request):
+    require_login(request)
+    conversation = store.get_conversation(conversation_id)
+    if not conversation:
+        return JSONResponse({"error": "Conversation not found"}, status_code=404)
+    if store.has_running_message(conversation_id):
+        return JSONResponse({"error": "Cannot compress while the conversation is running"}, status_code=409)
+
+    boundary_id = conversation["messages"][-1]["id"] if conversation.get("messages") else ""
+    store.update_conversation(
+        conversation_id,
+        tools_compressed=True,
+        tool_compression_boundary_id=boundary_id,
+    )
+    context_token_cache.pop(conversation_id, None)
+    return JSONResponse(
+        {
+            "conversation_id": conversation_id,
+            "tools_compressed": True,
+            "estimated_tokens": current_context_token_estimate(conversation_id),
+        }
+    )
+
+
+@app.get("/conversations/{conversation_id}/history")
+async def conversation_history(
+    conversation_id: str,
+    request: Request,
+    before: str = "",
+    limit: int = CHAT_HISTORY_PAGE_SIZE,
+):
+    require_login(request)
+    conversation = store.get_conversation(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    limit = max(1, min(int(limit), 100))
+    all_messages = conversation["messages"]
+    end = len(all_messages)
+    if before:
+        matching = next((index for index, item in enumerate(all_messages) if item["id"] == before), None)
+        if matching is None:
+            raise HTTPException(status_code=404, detail="History cursor not found")
+        end = matching
+    start = max(0, end - limit)
+    messages = [prepare_message_for_view(item, conversation_id) for item in all_messages[start:end]]
+    template = templates.get_template("message_fragment.html")
+    html = template.render(request=request, messages=messages)
+    return JSONResponse(
+        {
+            "html": html,
+            "has_more": start > 0,
+            "before_id": messages[0]["id"] if messages else "",
+        }
+    )
+
+
+@app.get("/conversations/{conversation_id}/tool-results/{message_id}")
+async def conversation_tool_result(conversation_id: str, message_id: str, request: Request):
+    require_login(request)
+    conversation = store.get_conversation(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    message = next(
+        (item for item in conversation["messages"] if item.get("id") == message_id and item.get("role") == "tool"),
+        None,
+    )
+    if message is None:
+        raise HTTPException(status_code=404, detail="Tool result not found")
+    return JSONResponse(
+        {
+            "message_id": message_id,
+            "name": message.get("name", ""),
+            "result": message.get("result"),
+        }
+    )
 
 
 @app.post("/conversations/{conversation_id}/messages")
@@ -344,17 +428,20 @@ async def conversation_stream(
             # 这样断线重连时不会依赖客户端猜测工具/文本事件是否已经收全。
             if not sent_snapshot:
                 tools = current_tool_messages(conversation, assistant_id)
+                assistant_view = prepare_message_for_view(assistant, conversation_id)
                 yield sse(
                     "snapshot",
                     {
                         "message_id": assistant_id,
                         "message": {
-                            "status": assistant.get("status", ""),
-                            "content": assistant.get("content", "") or "",
-                            "reasoning_content": assistant.get("reasoning_content", "") or "",
-                            "parts": assistant.get("parts") or [],
-                            "tool_calls": assistant.get("tool_calls") or [],
-                            "tool_messages": tools,
+                            "status": assistant_view.get("status", ""),
+                            "content": assistant_view.get("content", "") or "",
+                            "reasoning_content": assistant_view.get("reasoning_content", "") or "",
+                            "parts": assistant_view.get("parts") or [],
+                            "tool_calls": assistant_view.get("tool_calls") or [],
+                            "tool_messages": [
+                                prepare_message_for_view(item, conversation_id) for item in tools
+                            ],
                         },
                     },
                 )
@@ -405,7 +492,13 @@ async def conversation_stream(
             tools = current_tool_messages(conversation, assistant_id)
             if len(tools) > sent_tool_count:
                 for tool_message in tools[sent_tool_count:]:
-                    yield sse("tool_call_result", {"message_id": assistant_id, "message": tool_message})
+                    yield sse(
+                        "tool_call_result",
+                        {
+                            "message_id": assistant_id,
+                            "message": prepare_message_for_view(tool_message, conversation_id),
+                        },
+                    )
                 sent_tool_count = len(tools)
 
             context_tokens = current_context_token_estimate(conversation_id)
@@ -851,21 +944,79 @@ async def task_cancel_compat(task_id: str, request: Request):
     return await cancel_conversation(task_id, request)
 
 
+def prepare_tool_result_view(target: dict, result, conversation_id: str, message_id: str) -> dict:
+    preview = tool_result_preview(result)
+    target["result"] = None
+    target["result_preview"] = preview["text"]
+    target["result_size_chars"] = preview["size_chars"]
+    target["result_truncated"] = preview["truncated"]
+    target["result_url"] = f"/conversations/{conversation_id}/tool-results/{message_id}"
+    raw_transfer = result.get("result") if isinstance(result, dict) and result.get("ok") else None
+    target["transfer"] = (
+        copy.deepcopy(raw_transfer)
+        if isinstance(raw_transfer, dict)
+        and raw_transfer.get("type") in ("transferred_file", "user_question")
+        else None
+    )
+    return target
+
+
+def prepare_message_for_view(message: dict, conversation_id: str) -> dict:
+    view = copy.deepcopy(message)
+    if view.get("role") == "tool":
+        return prepare_tool_result_view(
+            view,
+            message.get("result"),
+            conversation_id,
+            message.get("id", ""),
+        )
+    if view.get("role") == "assistant":
+        for index, part in enumerate(message.get("parts") or []):
+            if part.get("type") != "tool":
+                continue
+            view["parts"][index] = prepare_tool_result_view(
+                view["parts"][index],
+                part.get("result"),
+                conversation_id,
+                part.get("tool_message_id", ""),
+            )
+    return view
+
+
+def prepare_conversation_for_view(conversation: dict, messages: list[dict]) -> dict:
+    view = {key: value for key, value in conversation.items() if key != "messages"}
+    view["messages"] = [prepare_message_for_view(message, conversation["id"]) for message in messages]
+    return view
+
+
 def render_chat(request: Request, conversation: dict | None):
     active_assistant = latest_assistant(conversation) if conversation else None
     reasoning_offset = len(active_assistant.get("reasoning_content", "")) if active_assistant else 0
     answer_offset = len(active_assistant.get("content", "")) if active_assistant else 0
     tool_count = len(current_tool_messages(conversation, active_assistant["id"])) if conversation and active_assistant else 0
+    visible_messages = []
+    history_has_more = False
+    history_before_id = ""
+    conversation_view = conversation
+    if conversation:
+        all_messages = conversation["messages"]
+        visible_messages = all_messages[-CHAT_HISTORY_PAGE_SIZE:]
+        history_has_more = len(all_messages) > len(visible_messages)
+        history_before_id = visible_messages[0]["id"] if history_has_more and visible_messages else ""
+        conversation_view = prepare_conversation_for_view(conversation, visible_messages)
     return templates.TemplateResponse(
         "index.html",
         base_context(request, active_page="chat")
         | {
-            "conversation": conversation,
+            "conversation": conversation_view,
             "is_running": bool(conversation and store.has_running_message(conversation["id"])),
             "active_assistant": active_assistant,
             "reasoning_offset": reasoning_offset,
             "answer_offset": answer_offset,
             "tool_count": tool_count,
+            "history_has_more": history_has_more,
+            "history_before_id": history_before_id,
+            "tools_compressed": bool(conversation and conversation.get("tools_compressed", False)),
             "context_token_estimate": (
                 current_context_token_estimate(conversation["id"]) if conversation else 0
             ),
@@ -1213,7 +1364,7 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
                             {
                                 "role": "tool",
                                 "tool_call_id": tool_call["id"],
-                                "content": json.dumps(result, ensure_ascii=False),
+                                "content": model_tool_content(result),
                             }
                         )
                         store.append_api_message(conversation_id, assistant_message_id, messages[-1])
@@ -1262,9 +1413,15 @@ def build_model_context(conversation_id: str, assistant_message_id: str, system_
 
 def current_context_token_estimate(conversation_id: str) -> int:
     """Estimate the tokens that the next model turn would receive for a conversation."""
+    now = time.monotonic()
+    cached = context_token_cache.get(conversation_id)
+    if cached and now - cached[0] < TOOL_CONTEXT_CACHE_SECONDS:
+        return cached[1]
     app_config = app_settings_store.get()
     messages = build_model_context(conversation_id, "", app_config["system_prompt"])
-    return estimate_message_tokens(messages)
+    estimate = estimate_message_tokens(messages)
+    context_token_cache[conversation_id] = (now, estimate)
+    return estimate
 
 
 def estimate_message_tokens(messages: list[dict]) -> int:

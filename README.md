@@ -8,10 +8,10 @@ CuteHarness is a small FastAPI web app for password-protected multi-turn Agent c
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+uvicorn app.main:app --reload --host 127.0.0.1 --port 7998
 ```
 
-Open `http://127.0.0.1:8000`.
+Open `http://127.0.0.1:7998`.
 
 The local `.env` file contains model provider API keys and the app password. Configure `DINGTALK_WEBHOOK_URL` before expecting DingTalk delivery.
 
