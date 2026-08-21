@@ -438,6 +438,7 @@ async def conversation_stream(
                             "content": assistant_view.get("content", "") or "",
                             "reasoning_content": assistant_view.get("reasoning_content", "") or "",
                             "parts": assistant_view.get("parts") or [],
+                            "render_parts": assistant_view.get("render_parts") or [],
                             "tool_calls": assistant_view.get("tool_calls") or [],
                             "tool_messages": [
                                 prepare_message_for_view(item, conversation_id) for item in tools
@@ -961,6 +962,26 @@ def prepare_tool_result_view(target: dict, result, conversation_id: str, message
     return target
 
 
+def build_render_parts(view: dict) -> list[dict]:
+    """把 tool_calls 按时间顺序合并进 parts，生成线性渲染序列。
+
+    调用卡片插在它对应结果的前面；还没有结果（运行中/失败）的调用排在末尾。
+    """
+    tool_calls = view.get("tool_calls") or []
+    pending = {tc.get("id", ""): tc for tc in tool_calls}
+    sequence: list[dict] = []
+    for part in view.get("parts") or []:
+        if part.get("type") == "tool":
+            call = pending.pop(part.get("tool_call_id", ""), None)
+            if call is not None:
+                sequence.append({"type": "tool_call", "tool_call": call})
+        sequence.append(part)
+    for call in tool_calls:
+        if call.get("id", "") in pending:
+            sequence.append({"type": "tool_call", "tool_call": call})
+    return sequence
+
+
 def prepare_message_for_view(message: dict, conversation_id: str) -> dict:
     view = copy.deepcopy(message)
     if view.get("role") == "tool":
@@ -980,6 +1001,7 @@ def prepare_message_for_view(message: dict, conversation_id: str) -> dict:
                 conversation_id,
                 part.get("tool_message_id", ""),
             )
+        view["render_parts"] = build_render_parts(view)
     return view
 
 

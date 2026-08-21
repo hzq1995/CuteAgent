@@ -2,6 +2,7 @@ import copy
 import json
 import threading
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from app.tool_output import model_tool_content
 
 PERSIST_INTERVAL_SECONDS = 0.25
 PERSIST_CHAR_THRESHOLD = 4096
+CACHE_MAX_SIZE = 32
 
 
 class TaskStore:
@@ -21,7 +23,7 @@ class TaskStore:
         self.lock = threading.Lock()
         self.dir.mkdir(parents=True, exist_ok=True)
         self._next_seq = self._compute_next_seq()
-        self._cache: dict[str, dict[str, Any]] = {}
+        self._cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._pending_chars: dict[str, int] = {}
         self._last_persisted_at: dict[str, float] = {}
         self._flush_timers: dict[str, threading.Timer] = {}
@@ -115,25 +117,25 @@ class TaskStore:
 
     def append_reasoning(self, conversation_id: str, message_id: str, text: str) -> dict[str, Any]:
         with self.lock:
-            conversation = self._read_one_or_raise(conversation_id)
+            conversation = self._read_one_for_append(conversation_id)
             message = self._find_message(conversation, message_id)
             message["reasoning_content"] += text
             append_text_part(message, "reasoning", text)
             message["updated_at"] = utc_now()
             conversation["updated_at"] = message["updated_at"]
             self._write_one_deferred(conversation, len(text))
-            return message
+            return copy.deepcopy(message)
 
     def append_answer(self, conversation_id: str, message_id: str, text: str) -> dict[str, Any]:
         with self.lock:
-            conversation = self._read_one_or_raise(conversation_id)
+            conversation = self._read_one_for_append(conversation_id)
             message = self._find_message(conversation, message_id)
             message["content"] += text
             append_text_part(message, "answer", text)
             message["updated_at"] = utc_now()
             conversation["updated_at"] = message["updated_at"]
             self._write_one_deferred(conversation, len(text))
-            return message
+            return copy.deepcopy(message)
 
     def attach_dingding_result(
         self, conversation_id: str, message_id: str, result: dict[str, Any]
@@ -280,16 +282,17 @@ class TaskStore:
     def _write_file(self, seq: int, conversation: dict[str, Any]) -> None:
         path = self.dir / f"{seq:06d}-{conversation['id']}.json"
         write_json_atomic(path, conversation)
-        timer = self._flush_timers.pop(conversation["id"], None)
-        if timer and timer is not threading.current_thread():
-            timer.cancel()
+        self._cancel_flush_timer(conversation["id"])
         self._cache[conversation["id"]] = copy.deepcopy(conversation)
+        self._cache.move_to_end(conversation["id"])
         self._pending_chars.pop(conversation["id"], None)
         self._last_persisted_at[conversation["id"]] = time.monotonic()
+        self._trim_cache()
 
     def _read_one(self, conversation_id: str) -> dict[str, Any] | None:
         cached = self._cache.get(conversation_id)
         if cached is not None:
+            self._cache.move_to_end(conversation_id)
             return copy.deepcopy(cached)
         path = self._conversation_path(conversation_id)
         if not path:
@@ -297,7 +300,9 @@ class TaskStore:
         try:
             conversation = normalize_conversation(json.loads(path.read_text(encoding="utf-8")))
             self._cache[conversation_id] = copy.deepcopy(conversation)
+            self._cache.move_to_end(conversation_id)
             self._last_persisted_at[conversation_id] = time.monotonic()
+            self._trim_cache()
             return copy.deepcopy(conversation)
         except (json.JSONDecodeError, OSError):
             return None
@@ -308,21 +313,38 @@ class TaskStore:
             raise KeyError(f"Conversation not found: {conversation_id}")
         return conversation
 
-    def _write_one(self, conversation: dict[str, Any]) -> None:
+    def _read_one_for_append(self, conversation_id: str) -> dict[str, Any]:
+        cached = self._cache.get(conversation_id)
+        if cached is not None:
+            self._cache.move_to_end(conversation_id)
+            return cached
+        return self._read_one_or_raise(conversation_id)
+
+    def _write_one(self, conversation: dict[str, Any], *, enforce_cache_limit: bool = True) -> None:
         path = self._conversation_path(conversation["id"])
         if not path:
             raise KeyError(f"Conversation file not found for: {conversation['id']}")
         write_json_atomic(path, conversation)
-        timer = self._flush_timers.pop(conversation["id"], None)
-        if timer and timer is not threading.current_thread():
-            timer.cancel()
-        self._cache[conversation["id"]] = copy.deepcopy(conversation)
+        self._cancel_flush_timer(conversation["id"])
+        cached = self._cache.get(conversation["id"])
+        if cached is conversation:
+            self._cache.move_to_end(conversation["id"])
+        else:
+            self._cache[conversation["id"]] = copy.deepcopy(conversation)
+            self._cache.move_to_end(conversation["id"])
         self._pending_chars.pop(conversation["id"], None)
         self._last_persisted_at[conversation["id"]] = time.monotonic()
+        if enforce_cache_limit:
+            self._trim_cache()
 
     def _write_one_deferred(self, conversation: dict[str, Any], changed_chars: int) -> None:
         conversation_id = conversation["id"]
-        self._cache[conversation_id] = copy.deepcopy(conversation)
+        cached = self._cache.get(conversation_id)
+        if cached is conversation:
+            self._cache.move_to_end(conversation_id)
+        else:
+            self._cache[conversation_id] = copy.deepcopy(conversation)
+            self._cache.move_to_end(conversation_id)
         self._pending_chars[conversation_id] = self._pending_chars.get(conversation_id, 0) + changed_chars
         elapsed = time.monotonic() - self._last_persisted_at.get(conversation_id, 0)
         if elapsed >= PERSIST_INTERVAL_SECONDS or self._pending_chars[conversation_id] >= PERSIST_CHAR_THRESHOLD:
@@ -340,6 +362,33 @@ class TaskStore:
             conversation = self._cache.get(conversation_id)
             if conversation is not None and self._pending_chars.get(conversation_id, 0):
                 self._write_one(conversation)
+
+    def _cancel_flush_timer(self, conversation_id: str) -> None:
+        timer = self._flush_timers.pop(conversation_id, None)
+        if timer and timer is not threading.current_thread():
+            timer.cancel()
+
+    def _trim_cache(self) -> None:
+        while len(self._cache) > CACHE_MAX_SIZE:
+            candidate_id = next(
+                (
+                    conversation_id
+                    for conversation_id, conversation in self._cache.items()
+                    if not has_running_message(conversation)
+                ),
+                None,
+            )
+            if candidate_id is None:
+                return
+
+            conversation = self._cache[candidate_id]
+            if self._pending_chars.get(candidate_id, 0):
+                self._write_one(conversation, enforce_cache_limit=False)
+            else:
+                self._cancel_flush_timer(candidate_id)
+            self._cache.pop(candidate_id, None)
+            self._pending_chars.pop(candidate_id, None)
+            self._last_persisted_at.pop(candidate_id, None)
 
     def _read_all(self) -> list[dict[str, Any]]:
         conversations = []

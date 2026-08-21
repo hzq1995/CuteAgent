@@ -55,6 +55,10 @@
               placeholder="{% if is_running %}当前回复生成中...{% else %}发送消息给 CuteHarness{% endif %}"
               {% if is_running %}disabled{% endif %}
             ></textarea>
+              <div class="composer-busy" hidden>
+                <span class="composer-busy-spinner" aria-hidden="true"></span>
+                <span class="composer-busy-timer">00:00</span>
+              </div>
             </div>
             <div class="composer-actions">
               <input id="composer-files" name="files" type="file" multiple {% if is_running %}disabled{% endif %}>
@@ -171,6 +175,7 @@
 
       // 若页面加载时对话正在进行，自动重连 SSE
       {% if conversation and is_running %}
+        setComposerBusy(true);
         startConversationStream("{{ conversation.id }}", {
           reasoningOffset: {{ reasoning_offset }},
           answerOffset: {{ answer_offset }},

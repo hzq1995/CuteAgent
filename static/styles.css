@@ -238,9 +238,173 @@ button {
   color: #8b5c17;
 }
 
+/* running/queued 状态动态效果：呼吸 + 追加点动画 */
+.message-status.running,
+.message-status.queued {
+  animation: status-breathe 1.8s ease-in-out infinite;
+}
+
+.message-status.running::after,
+.message-status.queued::after {
+  animation: status-dots 1.2s steps(1, end) infinite;
+  content: "···";
+}
+
+@keyframes status-breathe {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes status-dots {
+  0% {
+    content: "";
+  }
+  25% {
+    content: "·";
+  }
+  50% {
+    content: "··";
+  }
+  75%,
+  100% {
+    content: "···";
+  }
+}
+
+.conversation-status.running,
+.conversation-status.queued {
+  animation: status-breathe 1.8s ease-in-out infinite;
+}
+
 .conversation-status.succeeded,
 .message-status.succeeded {
   color: var(--success);
+}
+
+
+/* Text entrance: blur focus-in */
+.reasoning,
+.answer {
+    animation: text-focus-in 0.45s ease-out both;
+}
+@keyframes text-focus-in {
+    from {
+        opacity: 0;
+        filter: blur(6px);
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        filter: blur(0);
+        transform: translateY(0);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .reasoning,
+    .answer {
+        animation: none;
+    }
+}
+
+
+/* Per-delta fade for streaming reasoning text */
+.reasoning pre .delta-chunk,
+.answer .delta-chunk {
+    animation: chunk-focus-in 0.4s ease-out both;
+}
+@keyframes chunk-focus-in {
+    from {
+        opacity: 0;
+        filter: blur(2px);
+    }
+    to {
+        opacity: 1;
+        filter: blur(0);
+    }
+}
+/* Newly appended answer blocks (new paragraph/code block) fade in */
+.answer .block-in {
+    animation: text-focus-in 0.4s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+    .reasoning pre .delta-chunk,
+    .answer .delta-chunk,
+    .answer .block-in {
+        animation: none;
+    }
+}
+
+/* Tool card entrance animation: slide up + spring scale (A+B mix) */
+.tool-card,
+.tool-result-card {
+    animation: card-pop-in 0.38s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes card-pop-in {
+    from {
+        opacity: 0;
+        transform: translateY(10px) scale(0.92);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .tool-card,
+    .tool-result-card {
+        animation: none;
+    }
+}
+
+
+/* succeeded 勾选徽章：浅绿底胶囊 + ✓ + 一次性弹入 */
+.message-status.succeeded,
+.conversation-status.succeeded {
+  background: rgba(47, 122, 85, 0.12);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  font-weight: 500;
+  animation: badge-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.message-status.succeeded::before,
+.conversation-status.succeeded::before {
+  content: "✓";
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* 侧边栏 conversation-link 是 grid 布局，grid 子项默认拉伸占满整行，
+   这里让胶囊收缩为内容宽度，避免通长的绿框 */
+.conversation-link .conversation-status.succeeded {
+  justify-self: start;
+  width: fit-content;
+}
+
+/* 工具调用/返回卡片里的 succeeded 只留勾号，隐藏文字 */
+.tool-card-header .message-status.succeeded {
+  font-size: 0;
+  padding: 2px 5px;
+}
+
+.tool-card-header .message-status.succeeded::before {
+  font-size: 11px;
+}
+
+@keyframes badge-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .conversation-status.failed,
@@ -531,6 +695,40 @@ button {
   padding: 10px 12px;
 }
 
+/* 思考中状态：跳动的小圆点 + 边框呼吸 */
+.reasoning.thinking {
+  animation: thinking-glow 1.8s ease-in-out infinite;
+}
+
+@keyframes thinking-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(176, 93, 54, 0); }
+  50% { box-shadow: 0 0 0 3px rgba(176, 93, 54, 0.15); }
+}
+
+.think-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.think-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: think-bounce 1.2s ease-in-out infinite;
+}
+
+.think-dots i:nth-child(2) { animation-delay: 0.15s; }
+.think-dots i:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes think-bounce {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+
 .message-status {
   margin-left: 8px;
 }
@@ -547,6 +745,34 @@ button {
   padding: 12px;
   white-space: pre-wrap;
   word-break: break-word;
+  scrollbar-width: thin;
+  scrollbar-color: #cfc7b8 transparent;
+}
+
+/* Thinking 滚动条美化（WebKit 内核） */
+.reasoning pre::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.reasoning pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.reasoning pre::-webkit-scrollbar-thumb {
+  background: #cfc7b8;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.reasoning pre::-webkit-scrollbar-thumb:hover {
+  background: #b05d36;
+  background-clip: padding-box;
+}
+
+.reasoning pre::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .answer {
@@ -697,8 +923,8 @@ button {
 .inline-tool-message {
   flex: 0 1 auto;
   margin-left: 0;
-  max-width: 460px;
-  min-width: 200px;
+  max-width: 280px;
+  min-width: 160px;
 }
 
 .tool-card {
@@ -706,24 +932,37 @@ button {
   border: 1px solid var(--line);
   border-radius: 8px;
   color: var(--muted);
-  padding: 10px 12px;
+  padding: 7px 10px;
   width: 100%;
 }
 
 .tool-card-header {
   align-items: center;
   display: flex;
-  font-size: 13px;
+  font-size: 12px;
   justify-content: space-between;
 }
 
+/* 返回卡片工具名用钢蓝，前缀 ↩ 标记表示返回 */
+.tool-result-message .tool-card-header > span:first-child {
+  color: #33658a;
+  font-weight: 500;
+}
+
+.tool-result-message .tool-card-header > span:first-child::before {
+  content: "↩";
+  display: inline-block;
+  font-weight: 400;
+  margin-right: 4px;
+}
+
 .tool-card details {
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .tool-card summary {
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .tool-result-size {
@@ -734,14 +973,14 @@ button {
 
 .tool-card pre {
   background: var(--thinking);
-  border-radius: 8px;
+  border-radius: 6px;
   color: #4c4740;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
-  line-height: 1.5;
-  max-height: 260px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  max-height: 200px;
   overflow: auto;
-  padding: 12px;
+  padding: 10px;
   white-space: pre-wrap;
 }
 
@@ -862,12 +1101,135 @@ button {
   margin: 0 auto;
   max-width: 820px;
   padding: 12px;
+  position: relative;
 }
 
 .composer-main {
   display: grid;
   gap: 8px;
   min-width: 0;
+  position: relative;
+}
+
+/* 忙碌状态：旋转流光边框 + 输入区扫光 + 计时器 */
+@property --busy-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.composer.busy {
+  border-color: transparent;
+}
+
+.composer.busy::before {
+  animation: composer-busy-rotate 1.8s linear infinite;
+  background: conic-gradient(
+    from var(--busy-angle),
+    transparent 0deg,
+    transparent 240deg,
+    rgba(176, 93, 54, 0.75) 330deg,
+    transparent 360deg
+  );
+  border-radius: inherit;
+  content: "";
+  inset: -1px;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  padding: 1.5px;
+  pointer-events: none;
+  position: absolute;
+  z-index: 1;
+}
+
+@keyframes composer-busy-rotate {
+  to {
+    --busy-angle: 360deg;
+  }
+}
+
+.composer.busy .composer-main::after {
+  animation: composer-busy-shimmer 2.4s ease-in-out infinite;
+  background: linear-gradient(
+    100deg,
+    transparent 25%,
+    rgba(176, 93, 54, 0.05) 42%,
+    rgba(176, 93, 54, 0.12) 50%,
+    rgba(176, 93, 54, 0.05) 58%,
+    transparent 75%
+  );
+  background-size: 200% 100%;
+  border-radius: 12px;
+  bottom: 0;
+  content: "";
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+
+@keyframes composer-busy-shimmer {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -80% 0;
+  }
+}
+
+.composer-busy {
+  align-items: center;
+  bottom: 10px;
+  color: var(--muted);
+  display: flex;
+  font-size: 15px;
+  gap: 7px;
+  pointer-events: none;
+  position: absolute;
+  right: 10px;
+  z-index: 1;
+}
+
+.composer-busy[hidden] {
+  display: none;
+}
+
+.composer-busy-spinner {
+  animation: composer-busy-spin 0.9s linear infinite;
+  border: 2px solid rgba(176, 93, 54, 0.25);
+  border-radius: 50%;
+  border-top-color: var(--accent);
+  height: 14px;
+  width: 14px;
+}
+
+@keyframes composer-busy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.composer-busy-timer {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer.busy::before,
+  .composer.busy .composer-main::after,
+  .composer-busy-spinner,
+  .message-status.running,
+  .message-status.queued,
+  .message-status.running::after,
+  .message-status.queued::after,
+  .message-status.succeeded,
+  .conversation-status.succeeded,
+  .conversation-status.running,
+  .conversation-status.queued {
+    animation: none;
+  }
 }
 
 .composer-actions {

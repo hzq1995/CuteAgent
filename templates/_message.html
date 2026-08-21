@@ -1,7 +1,7 @@
 {% macro render_tool_result(tool) -%}
   <details>
     <summary>
-      查看返回结果
+      查看结果
       {% if tool.result_size_chars %}<span class="tool-result-size">{{ "{:,}".format(tool.result_size_chars) }} 字符</span>{% endif %}
     </summary>
     <pre class="tool-result-content">{{ tool.result_preview if tool.result_preview is defined else (tool.result | tojson(indent=2)) }}</pre>
@@ -37,33 +37,35 @@
     </article>
   {% elif message.role == "assistant" %}
     <article class="message assistant-message" data-message-id="{{ message.id }}">
-      <div class="assistant-avatar"><img src="/static/avatar/{{ range(1, 5) | random }}.png?v={{ static_v }}" alt="AI"></div>
+      <div class="assistant-avatar"><img src="/static/avatar/{{ ['1.png', '2.png', '3.png', '4.png', 'avatar_1_wave_5fps.gif', 'avatar_2_focus_headset_5fps.gif', 'avatar_3_thoughtful_5fps.gif', 'avatar_4_success_thumbsup_5fps.gif'] | random }}?v={{ static_v }}" alt="AI"></div>
       <div class="assistant-body">
         <div class="assistant-status-row">
           <span class="message-status {{ message.status }}">{{ message.status }}</span>
         </div>
         <div class="assistant-parts" id="parts-{{ message.id }}">
-          {% if message.tool_calls %}
-            {% for tool_call in message.tool_calls %}
-              <article class="message tool-message inline-tool-message tool-call-message" data-part-type="tool-call" data-tool-call-id="{{ tool_call.id }}">
-                <div class="tool-card">
-                  <div class="tool-card-header">
-                    <span>工具调用 · {{ tool_call.function.name }}</span>
-                    <span class="message-status succeeded">已发出</span>
+          {% if message.render_parts %}
+            {% for part in message.render_parts %}
+              {% if part.type == "tool_call" %}
+                <article class="message tool-message inline-tool-message tool-call-message" data-part-type="tool-call" data-tool-call-id="{{ part.tool_call.id }}">
+                  <div class="tool-card">
+                    <div class="tool-card-header">
+                      <span>{{ part.tool_call.function.name }}</span>
+                      <span class="message-status succeeded">已发出</span>
+                    </div>
+                    <details>
+                      <summary>调用参数</summary>
+                      <pre>{{ part.tool_call.function.arguments }}</pre>
+                    </details>
                   </div>
-                  <details>
-                    <summary>调用参数</summary>
-                    <pre>{{ tool_call.function.arguments }}</pre>
-                  </details>
-                </div>
-              </article>
-            {% endfor %}
-          {% endif %}
-          {% if message.parts %}
-            {% for part in message.parts %}
-              {% if part.type == "reasoning" %}
-                <details class="reasoning" {% if loop.last and message.status in ["queued", "running"] %}open{% endif %}>
-                  <summary>Thinking</summary>
+                </article>
+              {% elif part.type == "reasoning" %}
+                {% set reasoning_active = loop.last and message.status in ["queued", "running"] %}
+                <details class="reasoning{% if reasoning_active %} thinking{% endif %}" {% if reasoning_active %}open{% endif %}>
+                  {% if reasoning_active %}
+                    <summary>Thinking<span class="think-dots"><i></i><i></i><i></i></span></summary>
+                  {% else %}
+                    <summary>已深度思考</summary>
+                  {% endif %}
                   <pre>{{ part.content }}</pre>
                 </details>
               {% elif part.type == "answer" %}
@@ -72,7 +74,7 @@
                 <article class="message tool-message inline-tool-message tool-result-message" data-part-type="tool-result" data-tool-call-id="{{ part.tool_call_id or part.tool_message_id }}">
                   <div class="tool-card">
                     <div class="tool-card-header">
-                      <span>工具返回 · {{ part.name }}</span>
+                      <span>{{ part.name }}</span>
                       <span class="message-status {{ part.status }}">{{ part.status }}</span>
                     </div>
                     {% if part.transfer %}
@@ -109,8 +111,13 @@
               {% endif %}
             {% endfor %}
           {% elif message.reasoning_content or message.content %}
-            <details class="reasoning" {% if message.status in ["queued", "running"] %}open{% endif %}>
-              <summary>思考过程 <span class="message-status {{ message.status }}">{{ message.status }}</span></summary>
+            {% set reasoning_active = message.status in ["queued", "running"] %}
+            <details class="reasoning{% if reasoning_active %} thinking{% endif %}" {% if reasoning_active %}open{% endif %}>
+              {% if reasoning_active %}
+                <summary>Thinking<span class="think-dots"><i></i><i></i><i></i></span></summary>
+              {% else %}
+                <summary>已深度思考</summary>
+              {% endif %}
               <pre>{{ message.reasoning_content }}</pre>
             </details>
             <div class="answer markdown-body">{{ message.content }}</div>
@@ -122,7 +129,7 @@
     <article class="message tool-message tool-result-message" data-part-type="tool-result" data-tool-call-id="{{ message.tool_call_id }}">
       <div class="tool-card">
         <div class="tool-card-header">
-          <span>工具返回 · {{ message.name }}</span>
+          <span>{{ message.name }}</span>
           <span class="message-status {{ message.status }}">{{ message.status }}</span>
         </div>
         {{ render_tool_result(message) }}

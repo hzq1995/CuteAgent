@@ -4,6 +4,51 @@ let attachedFiles = [];
 const MAX_IMAGE_ATTACHMENTS = 8;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
+// 忙碌状态计时器（纯前端展示，刷新后从 0 重新计时）
+let busyTimerInterval = null;
+let busyTimerStart = 0;
+
+function busyIndicatorElements() {
+  const indicator = document.querySelector(".composer-busy");
+  const timerText = indicator ? indicator.querySelector(".composer-busy-timer") : null;
+  return { indicator, timerText };
+}
+
+function formatBusyDuration(totalSeconds) {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = seconds % 60;
+  const pad = (value) => String(value).padStart(2, "0");
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(rest)}` : `${pad(minutes)}:${pad(rest)}`;
+}
+
+function updateBusyTimer() {
+  const { timerText } = busyIndicatorElements();
+  if (!timerText) return;
+  timerText.textContent = formatBusyDuration((Date.now() - busyTimerStart) / 1000);
+}
+
+function startBusyIndicator() {
+  const { indicator } = busyIndicatorElements();
+  if (indicator) indicator.hidden = false;
+  busyTimerStart = Date.now();
+  updateBusyTimer();
+  if (!busyTimerInterval) {
+    busyTimerInterval = window.setInterval(updateBusyTimer, 1000);
+  }
+}
+
+function stopBusyIndicator() {
+  if (busyTimerInterval) {
+    window.clearInterval(busyTimerInterval);
+    busyTimerInterval = null;
+  }
+  busyTimerStart = 0;
+  const { indicator } = busyIndicatorElements();
+  if (indicator) indicator.hidden = true;
+}
+
 function setComposerBusy(isBusy) {
   if (!textarea || !button || !form) return;
   textarea.disabled = isBusy;
@@ -25,6 +70,12 @@ function setComposerBusy(isBusy) {
   }
   textarea.placeholder = isBusy ? "等待响应中..." : "发送消息给 CuteHarness";
   form.classList.toggle("disabled", isBusy);
+  form.classList.toggle("busy", isBusy);
+  if (isBusy) {
+    startBusyIndicator();
+  } else {
+    stopBusyIndicator();
+  }
   updateCompressionButtonState();
 }
 

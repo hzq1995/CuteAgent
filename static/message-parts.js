@@ -10,6 +10,7 @@ function scheduleAnswerRender(messageId, item) {
     pendingAnswerRenders.delete(messageId);
     renderAnswer(item);
     scheduleScrollToBottom();
+    finishReasoningParts(messageId);
     collapseReasoning(messageId);
   });
   pendingAnswerRenders.set(messageId, frame);
@@ -32,14 +33,40 @@ function appendReasoningDelta(messageId, delta) {
   let item = lastPart(messageId, "reasoning");
   if (!item) {
     item = document.createElement("details");
-    item.className = "reasoning";
+    item.className = "reasoning thinking";
     item.open = true;
     item.dataset.partType = "reasoning";
-    item.innerHTML = "<summary>Thinking</summary><pre></pre>";
+    item.dataset.thinkingStart = String(Date.now());
+    item.innerHTML = '<summary>Thinking<span class="think-dots"><i></i><i></i><i></i></span></summary><pre></pre>';
     parts.appendChild(item);
   }
-  item.querySelector("pre").textContent += delta;
+  const pre = item.querySelector("pre");
+  // 记录追加前是否贴近底部：用户主动往上翻看时（>48px）不强制跟随
+  const nearBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 48;
+  const chunk = document.createElement("span");
+  chunk.className = "delta-chunk";
+  chunk.textContent = delta;
+  pre.appendChild(chunk);
+  if (nearBottom) {
+    pre.scrollTop = pre.scrollHeight;
+  }
   scheduleScrollToBottom();
+}
+
+// 思考结束：去掉动画状态，改名为"已深度思考"（有起点时间则附上用时）
+function finishReasoningParts(messageId) {
+  document.querySelectorAll(`[data-message-id="${messageId}"] .reasoning.thinking`).forEach((details) => {
+    details.classList.remove("thinking");
+    const summary = details.querySelector("summary");
+    if (!summary) return;
+    let label = "已深度思考";
+    const start = Number(details.dataset.thinkingStart);
+    if (start) {
+      const sec = Math.max(1, Math.round((Date.now() - start) / 1000));
+      label += sec < 60 ? ` · ${sec}s` : ` · ${Math.floor(sec / 60)}m${sec % 60}s`;
+    }
+    summary.textContent = label;
+  });
 }
 
 function formatToolValue(value) {
@@ -81,6 +108,7 @@ function appendToolCall(messageId, message) {
   if (findToolCallCard(parts, message.tool_call_id)) return;
 
   parts.querySelector(".waiting")?.remove();
+  finishReasoningParts(messageId);
   const article = document.createElement("article");
   article.className = "message tool-message inline-tool-message tool-call-message";
   article.dataset.partType = "tool-call";
@@ -88,7 +116,7 @@ function appendToolCall(messageId, message) {
   article.innerHTML = `
     <div class="tool-card">
       <div class="tool-card-header">
-        <span>工具调用 · ${escapeHtml(message.name || "tool")}</span>
+        <span>${escapeHtml(message.name || "tool")}</span>
         <span class="message-status running">调用中</span>
       </div>
       <details>
@@ -105,6 +133,7 @@ function appendAnswerDelta(messageId, delta) {
   const parts = assistantParts(messageId);
   if (!parts) return;
   parts.querySelector(".waiting")?.remove();
+  finishReasoningParts(messageId);
   let item = lastPart(messageId, "answer");
   if (!item) {
     item = document.createElement("div");
@@ -124,6 +153,7 @@ function appendToolMessage(messageId, message) {
   const parts = assistantParts(messageId);
   if (!parts) return;
   parts.querySelector(".waiting")?.remove();
+  finishReasoningParts(messageId);
   updateToolCallStatus(parts, message.tool_call_id, message.status);
   if (findToolResultCard(parts, message.tool_call_id)) return;
   const article = document.createElement("article");
@@ -137,12 +167,12 @@ function appendToolMessage(messageId, message) {
   article.innerHTML = `
     <div class="tool-card">
       <div class="tool-card-header">
-        <span>工具返回 · ${escapeHtml(message.name || "tool")}</span>
+        <span>${escapeHtml(message.name || "tool")}</span>
         <span class="message-status ${escapeHtml(message.status || "")}">${escapeHtml(message.status || "")}</span>
       </div>
       ${transfer ? transferHtml(transfer) : ""}
       <details>
-        <summary>查看返回结果${resultSize ? ` <span class="tool-result-size">${resultSize.toLocaleString("zh-CN")} 字符</span>` : ""}</summary>
+        <summary>查看结果${resultSize ? ` <span class="tool-result-size">${resultSize.toLocaleString("zh-CN")} 字符</span>` : ""}</summary>
         <pre class="tool-result-content">${escapeHtml(resultText)}</pre>
         ${resultUrl ? `<button class="tool-result-load" type="button" data-tool-result-url="${escapeHtml(resultUrl)}">加载完整结果</button>` : ""}
       </details>
@@ -152,55 +182,127 @@ function appendToolMessage(messageId, message) {
   scheduleScrollToBottom();
 }
 
+function parseToolArgumentsRaw(raw) {
+  if (typeof raw !== "string") return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+// 快照回放后：若任务仍在进行且最后一部分是思考块，恢复"思考中"动画状态
+function markActiveReasoning(parts, message) {
+  if (message.status !== "queued" && message.status !== "running") return;
+  const last = parts.lastElementChild;
+  if (!last || last.dataset.partType !== "reasoning") return;
+  last.classList.add("thinking");
+  last.dataset.thinkingStart = String(Date.now());
+  const summary = last.querySelector("summary");
+  if (summary) summary.innerHTML = 'Thinking<span class="think-dots"><i></i><i></i><i></i></span>';
+}
+
 function syncAssistantSnapshot(messageId, message) {
   const parts = assistantParts(messageId);
   if (!parts || !message) return;
 
   parts.replaceChildren();
-  for (const toolCall of message.tool_calls || []) {
-    const toolCallId = toolCall.id || "";
-    if (!findToolCallCard(parts, toolCallId)) {
-      appendToolCall(messageId, {
-        tool_call_id: toolCallId,
-        name: toolCall.function?.name || "tool",
-        arguments: formatToolValue(toolCall.function?.arguments || "{}"),
-      });
+  if (Array.isArray(message.render_parts)) {
+    // 合并后的线性序列：tool_call / reasoning / tool / answer 按时间顺序排列
+    for (const part of message.render_parts) {
+      if (part.type === "tool_call") {
+        const call = part.tool_call || {};
+        appendToolCall(messageId, {
+          tool_call_id: call.id || "",
+          name: call.function?.name || "tool",
+          arguments: parseToolArgumentsRaw(call.function?.arguments),
+        });
+        continue;
+      }
+      if (part.type === "reasoning") {
+        const item = document.createElement("details");
+        item.className = "reasoning";
+        item.open = message.status === "queued" || message.status === "running";
+        item.dataset.partType = "reasoning";
+        item.innerHTML = "<summary>已深度思考</summary><pre></pre>";
+        const pre = item.querySelector("pre");
+        pre.textContent = part.content || "";
+        // 快照回放时任务仍在跑则定位到最新内容，已结束的保持从头展示
+        if (item.open) pre.scrollTop = pre.scrollHeight;
+        parts.appendChild(item);
+        continue;
+      }
+      if (part.type === "answer") {
+        const item = document.createElement("div");
+        item.className = "answer markdown-body";
+        item.dataset.partType = "answer";
+        item.dataset.raw = part.content || "";
+        parts.appendChild(item);
+        renderAnswer(item);
+        continue;
+      }
+      if (part.type === "tool") {
+        appendToolMessage(messageId, {
+          tool_call_id: part.tool_call_id || part.tool_message_id,
+          name: part.name,
+          status: part.status,
+          result: part.result,
+          result_preview: part.result_preview,
+          result_size_chars: part.result_size_chars,
+          result_url: part.result_url,
+          transfer: part.transfer,
+        });
+      }
     }
-  }
-
-  for (const part of message.parts || []) {
-    if (part.type === "reasoning") {
-      const item = document.createElement("details");
-      item.className = "reasoning";
-      item.open = message.status === "queued" || message.status === "running";
-      item.dataset.partType = "reasoning";
-      item.innerHTML = "<summary>Thinking</summary><pre></pre>";
-      item.querySelector("pre").textContent = part.content || "";
-      parts.appendChild(item);
-      continue;
+  } else {
+    for (const toolCall of message.tool_calls || []) {
+      const toolCallId = toolCall.id || "";
+      if (!findToolCallCard(parts, toolCallId)) {
+        appendToolCall(messageId, {
+          tool_call_id: toolCallId,
+          name: toolCall.function?.name || "tool",
+          arguments: formatToolValue(toolCall.function?.arguments || "{}"),
+        });
+      }
     }
 
-    if (part.type === "answer") {
-      const item = document.createElement("div");
-      item.className = "answer markdown-body";
-      item.dataset.partType = "answer";
-      item.dataset.raw = part.content || "";
-      parts.appendChild(item);
-      renderAnswer(item);
-      continue;
-    }
+    for (const part of message.parts || []) {
+      if (part.type === "reasoning") {
+        const item = document.createElement("details");
+        item.className = "reasoning";
+        item.open = message.status === "queued" || message.status === "running";
+        item.dataset.partType = "reasoning";
+        item.innerHTML = "<summary>已深度思考</summary><pre></pre>";
+        const pre = item.querySelector("pre");
+        pre.textContent = part.content || "";
+        // 快照回放时任务仍在跑则定位到最新内容，已结束的保持从头展示
+        if (item.open) pre.scrollTop = pre.scrollHeight;
+        parts.appendChild(item);
+        continue;
+      }
 
-    if (part.type === "tool") {
-      appendToolMessage(messageId, {
-        tool_call_id: part.tool_call_id || part.tool_message_id,
-        name: part.name,
-        status: part.status,
-        result: part.result,
-        result_preview: part.result_preview,
-        result_size_chars: part.result_size_chars,
-        result_url: part.result_url,
-        transfer: part.transfer,
-      });
+      if (part.type === "answer") {
+        const item = document.createElement("div");
+        item.className = "answer markdown-body";
+        item.dataset.partType = "answer";
+        item.dataset.raw = part.content || "";
+        parts.appendChild(item);
+        renderAnswer(item);
+        continue;
+      }
+
+      if (part.type === "tool") {
+        appendToolMessage(messageId, {
+          tool_call_id: part.tool_call_id || part.tool_message_id,
+          name: part.name,
+          status: part.status,
+          result: part.result,
+          result_preview: part.result_preview,
+          result_size_chars: part.result_size_chars,
+          result_url: part.result_url,
+          transfer: part.transfer,
+        });
+      }
     }
   }
 
@@ -218,6 +320,8 @@ function syncAssistantSnapshot(messageId, message) {
   }
 
   parts.querySelectorAll(".answer").forEach(renderAnswer);
+  // 所有内容追加完毕后再判定：仅当任务进行中且最后一个部分是思考块时恢复动画
+  markActiveReasoning(parts, message);
   scheduleScrollToBottom();
 }
 

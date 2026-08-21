@@ -14,6 +14,54 @@ function renderAnswer(target) {
   target.dataset.renderedRaw = raw;
 }
 
+// 流式尾部补丁：段落只是尾部追加文字时，不整块替换，把新增文字包成
+// .delta-chunk span 追加（带淡入动画）；结构变化则返回 false 走整体替换。
+// 每层失败都会撤销自己的改动，由 verify(textContent) 保证不丢字。
+function tryPatchStreamingBlock(oldEl, newEl) {
+  if (oldEl.tagName !== newEl.tagName) return false;
+  const oldText = oldEl.textContent;
+  const newText = newEl.textContent;
+  if (oldText === newText) return true;
+  if (!newText.startsWith(oldText)) return false;
+
+  const undo = [];
+  const revert = () => {
+    undo.forEach((fn) => fn());
+    return false;
+  };
+
+  const newLast = newEl.lastChild;
+  if (newLast && newLast.nodeType === Node.TEXT_NODE) {
+    const suffix = newText.slice(oldText.length);
+    if (suffix) {
+      const span = document.createElement("span");
+      span.className = "delta-chunk";
+      span.textContent = suffix;
+      oldEl.appendChild(span);
+      undo.push(() => span.remove());
+    }
+    return oldEl.textContent === newText ? true : revert();
+  }
+
+  if (newEl.children.length > 0 && newEl.children.length >= oldEl.children.length) {
+    for (let index = 0; index < newEl.children.length; index += 1) {
+      const oc = oldEl.children[index];
+      const nc = newEl.children[index];
+      if (!oc) {
+        const clone = nc.cloneNode(true);
+        clone.classList.add("block-in");
+        oldEl.appendChild(clone);
+        undo.push(() => clone.remove());
+      } else if (oc.outerHTML !== nc.outerHTML && !tryPatchStreamingBlock(oc, nc)) {
+        return revert();
+      }
+    }
+    return oldEl.textContent === newText ? true : revert();
+  }
+
+  return false;
+}
+
 function patchAnswerDom(target, html) {
   const template = document.createElement("template");
   template.innerHTML = html;
@@ -32,6 +80,7 @@ function patchAnswerDom(target, html) {
   const scrollAnchor = shouldPreserveScroll ? captureChatScrollAnchor(currentScroller) : null;
 
   const nextChildren = Array.from(template.content.children);
+  const previousCount = target.children.length;
   for (let index = 0; index < nextChildren.length; index += 1) {
     const nextChild = nextChildren[index];
     const currentChild = target.children[index];
@@ -44,13 +93,20 @@ function patchAnswerDom(target, html) {
     if (nextChild.classList.contains("table-scroll")) {
       patchTableBlock(currentChild, nextChild);
     } else if (currentChild.outerHTML !== nextChild.outerHTML) {
-      // 普通段落/列表只替换发生变化的块，不触碰已经完成的表格节点。
-      currentChild.replaceWith(nextChild);
+      // 普通段落/列表：先尝试尾部补丁（流式追加文字带动画），不行再整块替换。
+      if (!tryPatchStreamingBlock(currentChild, nextChild)) {
+        currentChild.replaceWith(nextChild);
+      }
     }
   }
 
   while (target.children.length > nextChildren.length) {
     target.lastElementChild.remove();
+  }
+
+  // 新增的块（段落/列表/代码块等）加淡入，段内增长保持即时替换不闪
+  for (let index = previousCount; index < target.children.length; index += 1) {
+    target.children[index].classList.add("block-in");
   }
 
   if (shouldPreserveScroll && currentScroller) {
@@ -417,9 +473,10 @@ function appendAssistantPlaceholder(messageId) {
   const article = document.createElement("article");
   article.className = "message assistant-message assistant-placeholder";
   article.dataset.messageId = messageId;
-  const avatarIndex = Math.floor(Math.random() * 4) + 1;
+  const avatarFiles = ["1.png", "2.png", "3.png", "4.png", "avatar_1_wave_5fps.gif", "avatar_2_focus_headset_5fps.gif", "avatar_3_thoughtful_5fps.gif", "avatar_4_success_thumbsup_5fps.gif"];
+  const avatarFile = avatarFiles[Math.floor(Math.random() * avatarFiles.length)];
   article.innerHTML = `
-    <div class="assistant-avatar"><img src="/static/avatar/${avatarIndex}.png" alt="AI"></div>
+    <div class="assistant-avatar"><img src="/static/avatar/${avatarFile}" alt="AI"></div>
     <div class="assistant-body">
       <div class="assistant-status-row">
         <span class="message-status queued">queued</span>

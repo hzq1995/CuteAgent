@@ -144,6 +144,7 @@ function startConversationStream(conversationId, options = {}) {
       return;
     }
     const payload = JSON.parse(event.data);
+    finishReasoningParts(payload.message_id);
     markAssistantFailed(payload.message_id, payload.error);
     source.close();
     if (currentSource === source) {
@@ -165,6 +166,7 @@ function startConversationStream(conversationId, options = {}) {
       setStatus(payload.message_id, payload.status);
     }
     flushAnswerRender(payload.message_id);
+    finishReasoningParts(payload.message_id);
     collapseReasoning(payload.message_id);
     document.querySelector(`[data-message-id="${payload.message_id}"] .waiting`)?.remove();
     setComposerBusy(false);
