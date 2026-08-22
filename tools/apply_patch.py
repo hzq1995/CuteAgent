@@ -20,7 +20,8 @@ TOOL_DEFINITION = {
             "Use the format starting with '*** Begin Patch' and ending with '*** End Patch'. "
             "It supports '*** Add File:', '*** Update File:', and '*** Delete File:' operations. "
             "Update hunks use context lines prefixed with a space, removed lines with '-', "
-            "and added lines with '+'."
+            "and added lines with '+'. In '*** Add File:' bodies, EVERY line (including blank "
+            "lines) must be prefixed with '+'; a blank line is written as a lone '+'."
         ),
         "parameters": {
             "type": "object",

@@ -77,7 +77,18 @@ tool_settings_store = ToolSettingsStore(BASE_DIR / "data" / "tool_settings.json"
 memory_store = MemoryStore(BASE_DIR / "data" / "memories.json")
 SKILLS_DIR = BASE_DIR / "skills"
 CANCELLED_STATUS = "cancelled"
-CHAT_HISTORY_PAGE_SIZE = 30
+CHAT_HISTORY_PAGE_SIZE = 6
+
+
+def renderable_history_messages(messages: list[dict]) -> list[dict]:
+    """返回可独立渲染的消息序列。
+
+    inline_rendered 的 tool 记录由所属 assistant 消息的 parts 一起渲染，
+    不会独立产出 DOM 节点。分页必须基于该过滤后的序列，否则窗口可能被
+    这些"影子记录"占满，导致首屏一条消息都渲染不出来。
+    """
+    return [item for item in messages if not (item.get("role") == "tool" and item.get("inline_rendered"))]
+
 TOOL_CONTEXT_CACHE_SECONDS = 1.5
 SCHEDULED_TASK_PROMPT_PREFIX = (
     "[定时任务触发]\n"
@@ -268,14 +279,17 @@ async def conversation_history(
 
     limit = max(1, min(int(limit), 100))
     all_messages = conversation["messages"]
-    end = len(all_messages)
+    renderable = renderable_history_messages(all_messages)
+    end = len(renderable)
     if before:
-        matching = next((index for index, item in enumerate(all_messages) if item["id"] == before), None)
+        position = {item["id"]: index for index, item in enumerate(all_messages)}
+        matching = position.get(before)
         if matching is None:
             raise HTTPException(status_code=404, detail="History cursor not found")
-        end = matching
+        # 游标可能指向任意原始记录：换算成"该记录之前有多少条可渲染消息"。
+        end = sum(1 for item in renderable if position.get(item["id"], -1) < matching)
     start = max(0, end - limit)
-    messages = [prepare_message_for_view(item, conversation_id) for item in all_messages[start:end]]
+    messages = [prepare_message_for_view(item, conversation_id) for item in renderable[start:end]]
     template = templates.get_template("message_fragment.html")
     html = template.render(request=request, messages=messages)
     return JSONResponse(
@@ -1021,7 +1035,7 @@ def render_chat(request: Request, conversation: dict | None):
     history_before_id = ""
     conversation_view = conversation
     if conversation:
-        all_messages = conversation["messages"]
+        all_messages = renderable_history_messages(conversation["messages"])
         visible_messages = all_messages[-CHAT_HISTORY_PAGE_SIZE:]
         history_has_more = len(all_messages) > len(visible_messages)
         history_before_id = visible_messages[0]["id"] if history_has_more and visible_messages else ""
@@ -1184,11 +1198,16 @@ def wants_json_response(request: Request) -> bool:
 
 
 def submit_payload(conversation_id: str, user_message: dict, assistant_message: dict) -> dict:
+    # The composer creates the conversation view before the SSE stream opens.
+    # Return the first estimate as part of the submit response so the UI does
+    # not have to wait for the first context_tokens event.
+    context_token_cache.pop(conversation_id, None)
     return {
         "conversation_id": conversation_id,
         "conversation_url": f"/conversations/{conversation_id}",
         "user_message": user_message,
         "assistant_message": assistant_message,
+        "estimated_tokens": current_context_token_estimate(conversation_id),
     }
 
 
@@ -1426,7 +1445,7 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
 
 def build_model_context(conversation_id: str, assistant_message_id: str, system_prompt: str) -> list[dict]:
     messages: list[dict] = []
-    system_content = build_system_prompt(system_prompt, memory_store.list_memories())
+    system_content = frozen_system_content(conversation_id, system_prompt)
     if system_content:
         messages.append({"role": "system", "content": system_content})
     messages.extend(store.chat_context(conversation_id, assistant_message_id))
@@ -1460,14 +1479,62 @@ def estimate_message_tokens(messages: list[dict]) -> int:
     return cjk_characters + non_cjk_tokens
 
 
-def build_system_prompt(system_prompt: str, memories: list[dict]) -> str:
+# Private-use-area sentinel: user text (prompts/memories) realistically never
+# contains these, so a global replace cannot corrupt frozen content. The plain
+# "{TODAY}" literal is still substituted for backward compatibility with
+# conversations frozen by the earlier implementation.
+DATE_PLACEHOLDER = "\ue000TODAY\ue001"
+LEGACY_DATE_PLACEHOLDER = "{TODAY}"
+
+
+def build_frozen_system_body(system_prompt: str, memories: list[dict]) -> str:
+    """Stable part of the system message: base prompt + memory block.
+
+    The date placeholder sits at the very END of the system message so that,
+    when the date changes across days, the base prompt + memory block prefix
+    can still hit the provider-side prefix cache. The stored body stays
+    byte-identical for the whole conversation while the model still sees the
+    current date.
+    """
     parts = []
     if system_prompt.strip():
         parts.append(system_prompt.strip())
     memory_block = format_memory_block(memories)
     if memory_block:
         parts.append(memory_block)
-    return "\n\n".join(parts)
+    return "\n\n".join(parts) if parts else f"今天的日期是：{DATE_PLACEHOLDER}"
+
+
+def frozen_system_content(conversation_id: str, system_prompt: str) -> str:
+    """Return the system content for a conversation, freezing it on first use.
+
+    The frozen body (base prompt + memories, no live date) is persisted on the
+    conversation so later memory edits or system prompt changes never shift
+    the prompt prefix mid-conversation, keeping the provider-side prefix
+    cache valid. The date placeholder is replaced with today's date per call.
+    """
+    conversation = store.get_conversation(conversation_id) or {}
+    frozen = conversation.get("frozen_system_prompt") or ""
+    if not frozen:
+        frozen = build_frozen_system_body(system_prompt, stable_memories())
+        if conversation.get("id"):
+            store.update_conversation(conversation_id, frozen_system_prompt=frozen)
+    today = today_date_str()
+    # New sentinel replace is safe; the legacy literal is only substituted in
+    # its full date-line form so user text containing a bare "{TODAY}" is
+    # never corrupted.
+    return (
+        frozen.replace(DATE_PLACEHOLDER, today)
+        .replace(f"今天的日期是：{LEGACY_DATE_PLACEHOLDER}", f"今天的日期是：{today}")
+    )
+
+
+def stable_memories() -> list[dict]:
+    """Memories in append-only order (created_at asc) for a stable prompt prefix."""
+    return sorted(
+        memory_store.list_memories(),
+        key=lambda item: (item.get("created_at", ""), item.get("id", "")),
+    )
 
 
 def create_llm_client(app_config: dict) -> OpenAICompatibleClient:
@@ -1499,12 +1566,17 @@ def format_memory_block(memories: list[dict]) -> str:
         if not content:
             continue
         lines.append(f"{format_memory_time(memory.get('updated_at', ''))} {memory.get('id', '')} {content}".strip())
-    WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-    _now = datetime.now(tz=ZoneInfo("Asia/Shanghai"))
-    now_str = _now.strftime("%Y-%m-%d") + " " + WEEKDAYS[_now.weekday()]
     if not lines:
-        return f"今天的日期是：{now_str}"
-    return f"今天的日期是：{now_str}，你拥有的记忆：\n" + "\n".join(lines)
+        return f"今天的日期是：{DATE_PLACEHOLDER}"
+    # Date goes last: the base prompt + memory lines stay a stable prefix
+    # across date changes, maximizing provider-side prefix cache reuse.
+    return "你拥有的记忆：\n" + "\n".join(lines) + f"\n\n今天的日期是：{DATE_PLACEHOLDER}"
+
+
+def today_date_str() -> str:
+    WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    now = datetime.now(tz=ZoneInfo("Asia/Shanghai"))
+    return now.strftime("%Y-%m-%d") + " " + WEEKDAYS[now.weekday()]
 
 
 def format_memory_time(value: str) -> str:

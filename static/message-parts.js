@@ -3,6 +3,97 @@
 // 依赖：dom-utils.js（assistantParts, lastPart, renderAnswer, collapseReasoning, scheduleScrollToBottom）
 
 const pendingAnswerRenders = new Map();
+const agentProgressTimers = new Map();
+const AGENT_PROGRESS_BLOCK_COUNT = 12;
+const AGENT_PROGRESS_STEP_MS = 1000;
+
+function renderAgentProgress(progress) {
+  const startedAt = Number(progress.dataset.startedAt) || Date.now();
+  progress.dataset.startedAt = String(startedAt);
+  const elapsed = Math.max(0, Date.now() - startedAt);
+  const activeCount = Math.min(
+    AGENT_PROGRESS_BLOCK_COUNT,
+    Math.max(1, Math.floor(elapsed / AGENT_PROGRESS_STEP_MS) + 1)
+  );
+  const blocks = progress.querySelector(".agent-progress-blocks");
+  if (!blocks) return;
+
+  while (blocks.children.length < AGENT_PROGRESS_BLOCK_COUNT) {
+    blocks.appendChild(document.createElement("i"));
+  }
+  Array.from(blocks.children).forEach((block, index) => {
+    block.classList.toggle("active", index < activeCount);
+  });
+  progress.classList.toggle("full", activeCount >= AGENT_PROGRESS_BLOCK_COUNT);
+}
+
+function startAgentProgress(messageId, progress) {
+  if (!progress) return;
+  renderAgentProgress(progress);
+  if (agentProgressTimers.has(messageId)) return;
+  const timer = window.setInterval(() => {
+    if (!progress.isConnected) {
+      window.clearInterval(timer);
+      agentProgressTimers.delete(messageId);
+      return;
+    }
+    renderAgentProgress(progress);
+  }, AGENT_PROGRESS_STEP_MS);
+  agentProgressTimers.set(messageId, timer);
+}
+
+function ensureAgentProgress(messageId) {
+  const parts = assistantParts(messageId);
+  if (!parts) return null;
+  let progress = parts.querySelector(".agent-progress");
+  if (!progress) {
+    progress = document.createElement("div");
+    progress.className = "agent-progress waiting";
+    progress.dataset.partType = "progress";
+    progress.setAttribute("role", "status");
+    progress.setAttribute("aria-label", "Processing");
+    progress.innerHTML =
+      '<span class="agent-progress-label">Processing</span>' +
+      '<span class="agent-progress-blocks" aria-hidden="true"></span>';
+    parts.appendChild(progress);
+  }
+  startAgentProgress(messageId, progress);
+  return progress;
+}
+
+function resetAgentProgress(messageId) {
+  const timer = agentProgressTimers.get(messageId);
+  if (timer) {
+    window.clearInterval(timer);
+    agentProgressTimers.delete(messageId);
+  }
+  const parts = assistantParts(messageId);
+  parts?.querySelector(".agent-progress")?.remove();
+  return ensureAgentProgress(messageId);
+}
+
+function removeAgentProgress(messageId, { animate = true } = {}) {
+  const timer = agentProgressTimers.get(messageId);
+  if (timer) {
+    window.clearInterval(timer);
+    agentProgressTimers.delete(messageId);
+  }
+  const selector =
+    '[data-message-id="' +
+    messageId +
+    '"] .agent-progress, [data-message-id="' +
+    messageId +
+    '"] .waiting';
+  const targets = document.querySelectorAll(selector);
+  targets.forEach((target) => {
+    if (animate && target.classList.contains("agent-progress")) {
+      target.classList.add("agent-progress-fading");
+      window.setTimeout(() => target.remove(), 240);
+    } else {
+      target.remove();
+    }
+  });
+}
 
 function scheduleAnswerRender(messageId, item) {
   if (pendingAnswerRenders.has(messageId)) return;
@@ -26,10 +117,37 @@ function flushAnswerRender(messageId) {
   if (item) renderAnswer(item);
 }
 
+function flushPendingAnswerRenders() {
+  for (const frame of pendingAnswerRenders.values()) {
+    cancelAnimationFrame(frame);
+  }
+  pendingAnswerRenders.clear();
+
+  const messageIds = new Set();
+  document.querySelectorAll(".assistant-parts .answer").forEach((item) => {
+    if (item.dataset.raw === undefined || item.dataset.raw === item.dataset.renderedRaw) return;
+    renderAnswer(item);
+    const messageId = item.closest("[data-message-id]")?.dataset.messageId;
+    if (messageId) messageIds.add(messageId);
+  });
+
+  messageIds.forEach((messageId) => {
+    finishReasoningParts(messageId);
+    collapseReasoning(messageId);
+  });
+  if (messageIds.size) scheduleScrollToBottom();
+}
+
+// Chrome 会暂停后台标签页的 requestAnimationFrame；切回时先把期间积累的
+// raw answer 全部补刷，避免思考/工具仍在更新但正常回答暂时不可见。
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") flushPendingAnswerRenders();
+});
+
 function appendReasoningDelta(messageId, delta) {
   const parts = assistantParts(messageId);
   if (!parts) return;
-  parts.querySelector(".waiting")?.remove();
+  removeAgentProgress(messageId);
   let item = lastPart(messageId, "reasoning");
   if (!item) {
     item = document.createElement("details");
@@ -107,6 +225,8 @@ function appendToolCall(messageId, message) {
   if (!parts || !message) return;
   if (findToolCallCard(parts, message.tool_call_id)) return;
 
+  const progress = parts.querySelector(".agent-progress");
+  progress?.remove();
   parts.querySelector(".waiting")?.remove();
   finishReasoningParts(messageId);
   const article = document.createElement("article");
@@ -126,13 +246,14 @@ function appendToolCall(messageId, message) {
     </div>
   `;
   parts.appendChild(article);
+  if (progress) parts.appendChild(progress);
   scheduleScrollToBottom();
 }
 
 function appendAnswerDelta(messageId, delta) {
   const parts = assistantParts(messageId);
   if (!parts) return;
-  parts.querySelector(".waiting")?.remove();
+  removeAgentProgress(messageId);
   finishReasoningParts(messageId);
   let item = lastPart(messageId, "answer");
   if (!item) {
@@ -149,13 +270,19 @@ function appendAnswerDelta(messageId, delta) {
   scheduleAnswerRender(messageId, item);
 }
 
-function appendToolMessage(messageId, message) {
+function appendToolMessage(messageId, message, showProgress = false) {
   const parts = assistantParts(messageId);
   if (!parts) return;
+  const progress = parts.querySelector(".agent-progress");
+  progress?.remove();
   parts.querySelector(".waiting")?.remove();
   finishReasoningParts(messageId);
   updateToolCallStatus(parts, message.tool_call_id, message.status);
-  if (findToolResultCard(parts, message.tool_call_id)) return;
+  if (findToolResultCard(parts, message.tool_call_id)) {
+    if (showProgress) resetAgentProgress(messageId);
+    else if (progress) parts.appendChild(progress);
+    return;
+  }
   const article = document.createElement("article");
   article.className = "message tool-message inline-tool-message tool-result-message";
   article.dataset.partType = "tool-result";
@@ -179,6 +306,8 @@ function appendToolMessage(messageId, message) {
     </div>
   `;
   parts.appendChild(article);
+  if (showProgress) resetAgentProgress(messageId);
+  else if (progress) parts.appendChild(progress);
   scheduleScrollToBottom();
 }
 
@@ -206,6 +335,7 @@ function syncAssistantSnapshot(messageId, message) {
   const parts = assistantParts(messageId);
   if (!parts || !message) return;
 
+  removeAgentProgress(messageId, { animate: false });
   parts.replaceChildren();
   if (Array.isArray(message.render_parts)) {
     // 合并后的线性序列：tool_call / reasoning / tool / answer 按时间顺序排列
@@ -322,6 +452,11 @@ function syncAssistantSnapshot(messageId, message) {
   parts.querySelectorAll(".answer").forEach(renderAnswer);
   // 所有内容追加完毕后再判定：仅当任务进行中且最后一个部分是思考块时恢复动画
   markActiveReasoning(parts, message);
+  const isActive = message.status === "queued" || message.status === "running";
+  const lastType = parts.lastElementChild?.dataset.partType;
+  if (isActive && lastType !== "reasoning" && lastType !== "answer") {
+    ensureAgentProgress(messageId);
+  }
   scheduleScrollToBottom();
 }
 

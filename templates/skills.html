@@ -31,10 +31,21 @@
                   <p class="kicker">Library</p>
                   <h2>skills/</h2>
                 </div>
-                <code>{{ skills|length }} md</code>
+                <code id="skill-count" aria-live="polite">{{ skills|length }} md</code>
               </div>
               {% if skills %}
-                <nav class="skill-list">
+                <label class="skill-search" for="skill-search-input">
+                  <span>快速筛选</span>
+                  <input
+                    id="skill-search-input"
+                    type="search"
+                    placeholder="输入技能名称关键词"
+                    autocomplete="off"
+                    spellcheck="false"
+                    aria-controls="skill-list"
+                  >
+                </label>
+                <nav class="skill-list" id="skill-list">
                   {% for skill in skills %}
                     <a class="skill-list-item {% if selected_skill and skill.name == selected_skill.name %}active{% endif %}" href="{{ skill.url }}">
                       <span class="skill-name">{{ skill.name }}</span>
@@ -42,6 +53,7 @@
                     </a>
                   {% endfor %}
                 </nav>
+                <p class="skill-search-empty muted" id="skill-search-empty" aria-live="polite" hidden>没有匹配的技能。</p>
               {% else %}
                 <p class="muted">skills/ 下暂无 Markdown 技能文件。</p>
               {% endif %}
@@ -77,5 +89,37 @@
         </section>
       </main>
     </div>
+    {% if skills %}
+      <script>
+        (() => {
+          const input = document.getElementById("skill-search-input");
+          const list = document.getElementById("skill-list");
+          const empty = document.getElementById("skill-search-empty");
+          const count = document.getElementById("skill-count");
+          if (!input || !list) return;
+
+          const items = Array.from(list.querySelectorAll(".skill-list-item")).map((item) => ({
+            element: item,
+            name: item.querySelector(".skill-name")?.textContent.trim().toLocaleLowerCase() || "",
+          }));
+
+          function filterSkills() {
+            const query = input.value.trim().toLocaleLowerCase();
+            let visibleCount = 0;
+
+            items.forEach(({ element, name }) => {
+              const matches = !query || name.includes(query);
+              element.hidden = !matches;
+              if (matches) visibleCount += 1;
+            });
+
+            if (empty) empty.hidden = visibleCount > 0;
+            if (count) count.textContent = query ? `${visibleCount} / ${items.length} md` : `${items.length} md`;
+          }
+
+          input.addEventListener("input", filterSkills);
+        })();
+      </script>
+    {% endif %}
   </body>
 </html>

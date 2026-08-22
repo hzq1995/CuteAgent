@@ -252,7 +252,7 @@ button {
 
 @keyframes status-breathe {
   50% {
-    opacity: 0.55;
+    opacity: 0.45;
   }
 }
 
@@ -486,11 +486,67 @@ button {
 }
 
 .context-token-estimate {
+  align-items: center;
   color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   font-size: 13px;
   margin: 10px auto 0;
   max-width: 820px;
   padding: 0 4px;
+}
+
+.connection-status {
+  align-items: center;
+  display: inline-flex;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.connection-status-dot {
+  background: var(--muted);
+  border-radius: 50%;
+  display: inline-block;
+  flex: 0 0 8px;
+  height: 8px;
+  width: 8px;
+}
+
+.connection-status.connected {
+  color: var(--success);
+}
+
+.connection-status.connected .connection-status-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 2px rgba(47, 122, 85, 0.16), 0 0 7px rgba(47, 122, 85, 0.42);
+}
+
+.connection-status.connecting,
+.connection-status.reconnecting {
+  color: #8b5c17;
+}
+
+.connection-status.connecting .connection-status-dot,
+.connection-status.reconnecting .connection-status-dot {
+  animation: connection-status-pulse 1.2s ease-in-out infinite;
+  background: #c58a27;
+  box-shadow: 0 0 0 2px rgba(197, 138, 39, 0.16), 0 0 7px rgba(197, 138, 39, 0.38);
+}
+
+.connection-status.error {
+  color: var(--warn);
+}
+
+.connection-status.error .connection-status-dot {
+  background: var(--warn);
+  box-shadow: 0 0 0 2px rgba(161, 61, 45, 0.16), 0 0 7px rgba(161, 61, 45, 0.38);
+}
+
+@keyframes connection-status-pulse {
+  50% {
+    opacity: 0.45;
+  }
 }
 
 .chat-header h1,
@@ -505,7 +561,42 @@ button {
   align-content: center;
   display: grid;
   min-height: 70vh;
+  position: relative;
   text-align: center;
+}
+
+.empty-state h1 {
+  justify-self: center;
+  position: relative;
+  width: fit-content;
+  z-index: 0;
+}
+
+.empty-state h1::before {
+  animation: orb-breathe 6.5s ease-in-out infinite;
+  background: radial-gradient(
+    ellipse,
+    rgba(214, 118, 66, 0.32),
+    rgba(232, 158, 108, 0.14) 50%,
+    transparent 72%
+  );
+  border-radius: 50%;
+  content: "";
+  filter: blur(18px);
+  inset: -0.5em -1.3em;
+  position: absolute;
+  z-index: -1;
+}
+
+@keyframes orb-breathe {
+  0%, 100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.07);
+  }
 }
 
 .empty-state p:last-child {
@@ -785,6 +876,59 @@ button {
 .answer.waiting {
   color: var(--muted);
   font-style: italic;
+}
+
+.agent-progress {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  flex: 1 1 100%;
+  font-size: 13px;
+  gap: 8px;
+  min-height: 24px;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.24s ease, transform 0.24s ease;
+}
+
+.agent-progress-fading {
+  opacity: 0;
+  transform: translateY(-3px);
+}
+
+.agent-progress-label {
+  flex: 0 0 auto;
+}
+
+.agent-progress-blocks {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.agent-progress-blocks i {
+  background: var(--line);
+  border-radius: 2px;
+  display: block;
+  height: 8px;
+  opacity: 0.45;
+  transition: background-color 0.24s ease, box-shadow 0.24s ease, opacity 0.24s ease;
+  width: 8px;
+}
+
+.agent-progress-blocks i.active {
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(176, 93, 54, 0.22);
+  opacity: 1;
+}
+
+.agent-progress.full .agent-progress-blocks i.active {
+  animation: agent-progress-breathe 1.2s ease-in-out infinite;
+}
+
+@keyframes agent-progress-breathe {
+  50% {
+    opacity: 0.45;
+  }
 }
 
 .answer-revealing::after {
@@ -1227,7 +1371,8 @@ button {
   .message-status.succeeded,
   .conversation-status.succeeded,
   .conversation-status.running,
-  .conversation-status.queued {
+  .conversation-status.queued,
+  .agent-progress.full .agent-progress-blocks i.active {
     animation: none;
   }
 }
@@ -1721,6 +1866,35 @@ button {
   padding: 18px;
 }
 
+.skill-search {
+  display: grid;
+  gap: 6px;
+}
+
+.skill-search > span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.skill-search input {
+  background: #fffaf1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  outline: none;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.skill-search input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(176, 93, 54, 0.12);
+}
+
+.skill-search-empty {
+  margin: 0;
+}
+
 .skill-list {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1735,6 +1909,10 @@ button {
   gap: 5px;
   padding: 12px;
   text-decoration: none;
+}
+
+.skill-list-item[hidden] {
+  display: none;
 }
 
 .skill-list-item + .skill-list-item {
@@ -1949,7 +2127,7 @@ button {
 .composer button:disabled,
 .composer textarea:disabled {
   cursor: not-allowed;
-  opacity: 0.55;
+  opacity: 0.45;
 }
 
 .login-page {

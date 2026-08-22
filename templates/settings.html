@@ -22,6 +22,35 @@
           {% if error %}
             <p class="error-note">{{ error }}</p>
           {% endif %}
+
+          <section class="memory-section">
+            <div class="page-header compact-header">
+              <p class="kicker">Memory</p>
+              <h2>记忆管理</h2>
+            </div>
+            {% if memories %}
+              <div class="memory-list">
+                {% for memory in memories %}
+                  <article class="memory-row">
+                    <div class="memory-meta">
+                      <span>{{ memory.updated_at[:16].replace("T", " ") }}</span>
+                      <code>{{ memory.id }}</code>
+                    </div>
+                    <form class="memory-form" method="post" action="/memories/{{ memory.id }}">
+                      <textarea name="content" rows="2" required>{{ memory.content }}</textarea>
+                      <button type="submit">保存</button>
+                    </form>
+                    <form class="memory-delete-form" method="post" action="/memories/{{ memory.id }}/delete">
+                      <button class="danger-button" type="submit">删除</button>
+                    </form>
+                  </article>
+                {% endfor %}
+              </div>
+            {% else %}
+              <p class="muted">暂无记忆。AI 会在需要长期保存关键信息时通过工具新增记忆。</p>
+            {% endif %}
+          </section>
+
           <form class="panel-form" method="post" action="/settings">
             <section class="model-settings">
               <div class="settings-section-head">
@@ -122,6 +151,9 @@
                 <input name="max_tool_rounds" type="number" min="1" max="200" value="{{ app_settings.max_tool_rounds }}">
               </label>
             </div>
+            <div class="form-actions">
+              <button type="submit">保存设置</button>
+            </div>
             <section class="tool-settings">
               <div class="settings-section-head">
                 <div>
@@ -154,38 +186,7 @@
                 <p class="muted">当前没有加载到工具。</p>
               {% endif %}
             </section>
-            <div class="form-actions">
-              <button type="submit">保存设置</button>
-            </div>
           </form>
-
-          <section class="memory-section">
-            <div class="page-header compact-header">
-              <p class="kicker">Memory</p>
-              <h2>记忆管理</h2>
-            </div>
-            {% if memories %}
-              <div class="memory-list">
-                {% for memory in memories %}
-                  <article class="memory-row">
-                    <div class="memory-meta">
-                      <span>{{ memory.updated_at[:16].replace("T", " ") }}</span>
-                      <code>{{ memory.id }}</code>
-                    </div>
-                    <form class="memory-form" method="post" action="/memories/{{ memory.id }}">
-                      <textarea name="content" rows="2" required>{{ memory.content }}</textarea>
-                      <button type="submit">保存</button>
-                    </form>
-                    <form class="memory-delete-form" method="post" action="/memories/{{ memory.id }}/delete">
-                      <button class="danger-button" type="submit">删除</button>
-                    </form>
-                  </article>
-                {% endfor %}
-              </div>
-            {% else %}
-              <p class="muted">暂无记忆。AI 会在需要长期保存关键信息时通过工具新增记忆。</p>
-            {% endif %}
-          </section>
         </section>
       </main>
     </div>

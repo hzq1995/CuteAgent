@@ -190,10 +190,7 @@ async function stopCurrentConversation() {
       collapseReasoning(payload.message_id);
       document.querySelector(`[data-message-id="${payload.message_id}"] .waiting`)?.remove();
     }
-    if (currentSource) {
-      currentSource.close();
-      currentSource = null;
-    }
+    stopConversationStream();
     setComposerBusy(false);
     if (textarea) textarea.focus();
   } catch (error) {
@@ -222,10 +219,7 @@ async function compressCurrentConversation() {
     const payload = await response.json();
     form.dataset.toolsCompressed = "true";
     updateCompressionButtonState();
-    const estimate = document.getElementById("context-token-estimate");
-    if (estimate && typeof payload.estimated_tokens === "number") {
-      estimate.textContent = `上下文：约 ${payload.estimated_tokens.toLocaleString("zh-CN")} tokens`;
-    }
+    setContextTokenEstimate(payload.estimated_tokens);
     showComposerNotice("已压缩当前历史工具调用；之后新产生的工具调用会保留，直到再次压缩");
   } catch (error) {
     updateCompressionButtonState();
@@ -471,6 +465,7 @@ function initComposer() {
       clearAttachedFiles();
       replaceAssistantId(pendingId, payload.assistant_message.id);
       setStatus(payload.assistant_message.id, payload.assistant_message.status || "queued");
+      setContextTokenEstimate(payload.estimated_tokens);
       form.setAttribute("action", `${payload.conversation_url}/messages`);
       setActiveConversationId(payload.conversation_id);
 

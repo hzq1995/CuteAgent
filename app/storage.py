@@ -414,6 +414,7 @@ def normalize_conversation(item: dict[str, Any]) -> dict[str, Any]:
         item.setdefault("error", "")
         item.setdefault("tools_compressed", False)
         item.setdefault("tool_compression_boundary_id", "")
+        item.setdefault("frozen_system_prompt", "")
         # Older versions stored only a permanent boolean. The exact checkpoint
         # cannot be reconstructed, so start those conversations uncompressed
         # and let the next click establish a precise boundary.

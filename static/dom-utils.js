@@ -14,6 +14,21 @@ function renderAnswer(target) {
   target.dataset.renderedRaw = raw;
 }
 
+function setContextTokenEstimate(estimatedTokens) {
+  if (!Number.isFinite(estimatedTokens)) return;
+  const container = document.getElementById("context-token-estimate");
+  if (!container) return;
+
+  let label = container.querySelector(".context-token-label");
+  if (!label) {
+    label = document.createElement("span");
+    label.className = "context-token-label";
+    const status = container.querySelector("#connection-status");
+    container.insertBefore(label, status || null);
+  }
+  label.textContent = "上下文：" + estimatedTokens.toLocaleString("zh-CN") + " tokens";
+}
+
 // 流式尾部补丁：段落只是尾部追加文字时，不整块替换，把新增文字包成
 // .delta-chunk span 追加（带淡入动画）；结构变化则返回 false 走整体替换。
 // 每层失败都会撤销自己的改动，由 verify(textContent) 保证不丢字。
@@ -415,7 +430,19 @@ function ensureContextTokenEstimate() {
   const estimate = document.createElement("p");
   estimate.className = "context-token-estimate";
   estimate.id = "context-token-estimate";
-  estimate.textContent = "上下文：计算中…";
+  estimate.innerHTML = `
+    <span class="context-token-label">上下文：计算中…</span>
+    <span
+      class="connection-status idle"
+      id="connection-status"
+      data-state="idle"
+      role="status"
+      aria-live="polite"
+    >
+      <span class="connection-status-dot" aria-hidden="true"></span>
+      <span class="connection-status-label">已就绪</span>
+    </span>
+  `;
   composer.insertAdjacentElement("afterend", estimate);
   composerWrap.classList.add("has-context-token-estimate");
 }
@@ -482,11 +509,20 @@ function appendAssistantPlaceholder(messageId) {
         <span class="message-status queued">queued</span>
       </div>
       <div class="assistant-parts" id="parts-${messageId}">
-        <div class="answer markdown-body waiting" data-part-type="answer">等待响应...</div>
+        <div
+          class="agent-progress waiting"
+          data-part-type="progress"
+          role="status"
+          aria-label="Processing"
+        >
+          <span class="agent-progress-label">Processing</span>
+          <span class="agent-progress-blocks" aria-hidden="true"></span>
+        </div>
       </div>
     </div>
   `;
   list.appendChild(article);
+  if (typeof ensureAgentProgress === "function") ensureAgentProgress(messageId);
   scrollToBottom({ force: true });
   return article;
 }

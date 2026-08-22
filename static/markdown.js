@@ -18,8 +18,37 @@ function renderInlineMarkdown(value) {
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 }
 
+function splitCollapsedTableLine(line) {
+  // 把被压成一行的表格拆开：先按 | | 边界切段，找到 |---| 分隔段确定列数，
+  // 再把所有单元格按列数重新分组，避免空单元格（| |）被误当成行边界。
+  const segments = line
+    .replace(/\|\s+(?=\|)/g, "|\n")
+    .split("\n")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  const dividerIndex = segments.findIndex(isTableDivider);
+  if (dividerIndex < 1) return line; // 分隔段前面必须有表头
+  const columnCount = parseTableRow(segments[dividerIndex]).length;
+  const cells = segments
+    .filter((_, index) => index !== dividerIndex)
+    .flatMap((segment) => parseTableRow(segment) || []);
+  if (!cells.length || cells.length % columnCount !== 0) return line; // 列数对不齐时保守放弃
+  const rows = [];
+  for (let i = 0; i < cells.length; i += columnCount) {
+    rows.push(`| ${cells.slice(i, i + columnCount).join(" | ")} |`);
+  }
+  rows.splice(1, 0, segments[dividerIndex]); // 表头行之后插回分隔行
+  return rows.join("\n");
+}
+
 function normalizeMarkdownTables(source) {
-  return source.replace(/\|\s+(?=\|)/g, "|\n");
+  return source
+    .split("\n")
+    .map((line) =>
+      // 同一行里既有表格分隔符（|---|）又有被压扁的行边界（| |）才尝试修复
+      /\|\s*:?-+:?\s*\|/.test(line) && /\|\s+\|/.test(line) ? splitCollapsedTableLine(line) : line,
+    )
+    .join("\n");
 }
 
 function parseTableRow(line) {

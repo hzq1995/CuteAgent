@@ -79,7 +79,19 @@
             </div>
           </form>
           {% if conversation %}
-            <p class="context-token-estimate" id="context-token-estimate">上下文：约 {{ "{:,}".format(context_token_estimate) }} tokens</p>
+            <p class="context-token-estimate" id="context-token-estimate">
+              <span class="context-token-label">上下文：约 {{ "{:,}".format(context_token_estimate) }} tokens</span>
+              <span
+                class="connection-status idle"
+                id="connection-status"
+                data-state="idle"
+                role="status"
+                aria-live="polite"
+              >
+                <span class="connection-status-dot" aria-hidden="true"></span>
+                <span class="connection-status-label">已就绪</span>
+              </span>
+            </p>
           {% endif %}
         </section>
       </main>
@@ -136,7 +148,7 @@
           const conversationId = form?.dataset.conversationId;
           const beforeId = loadButton.dataset.beforeId;
           try {
-            const response = await fetch(`/conversations/${conversationId}/history?before=${encodeURIComponent(beforeId)}&limit=30`, {
+            const response = await fetch(`/conversations/${conversationId}/history?before=${encodeURIComponent(beforeId)}&limit=6`, {
               headers: { Accept: "application/json" },
             });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
