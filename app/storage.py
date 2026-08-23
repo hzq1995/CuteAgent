@@ -15,6 +15,7 @@ from app.tool_output import model_tool_content
 PERSIST_INTERVAL_SECONDS = 0.25
 PERSIST_CHAR_THRESHOLD = 4096
 CACHE_MAX_SIZE = 32
+STREAM_UPDATE_COALESCE_SECONDS = 0.08
 
 
 class TaskStore:
@@ -24,6 +25,8 @@ class TaskStore:
         self.dir.mkdir(parents=True, exist_ok=True)
         self._next_seq = self._compute_next_seq()
         self._cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._stream_condition = threading.Condition(self.lock)
+        self._stream_revisions: dict[str, int] = {}
         self._pending_chars: dict[str, int] = {}
         self._last_persisted_at: dict[str, float] = {}
         self._flush_timers: dict[str, threading.Timer] = {}
@@ -115,7 +118,14 @@ class TaskStore:
             self._write_one(conversation)
             return message
 
-    def append_reasoning(self, conversation_id: str, message_id: str, text: str) -> dict[str, Any]:
+    def append_reasoning(
+        self,
+        conversation_id: str,
+        message_id: str,
+        text: str,
+        *,
+        return_copy: bool = True,
+    ) -> dict[str, Any] | None:
         with self.lock:
             conversation = self._read_one_for_append(conversation_id)
             message = self._find_message(conversation, message_id)
@@ -124,9 +134,16 @@ class TaskStore:
             message["updated_at"] = utc_now()
             conversation["updated_at"] = message["updated_at"]
             self._write_one_deferred(conversation, len(text))
-            return copy.deepcopy(message)
+            return copy.deepcopy(message) if return_copy else None
 
-    def append_answer(self, conversation_id: str, message_id: str, text: str) -> dict[str, Any]:
+    def append_answer(
+        self,
+        conversation_id: str,
+        message_id: str,
+        text: str,
+        *,
+        return_copy: bool = True,
+    ) -> dict[str, Any] | None:
         with self.lock:
             conversation = self._read_one_for_append(conversation_id)
             message = self._find_message(conversation, message_id)
@@ -135,7 +152,7 @@ class TaskStore:
             message["updated_at"] = utc_now()
             conversation["updated_at"] = message["updated_at"]
             self._write_one_deferred(conversation, len(text))
-            return copy.deepcopy(message)
+            return copy.deepcopy(message) if return_copy else None
 
     def attach_dingding_result(
         self, conversation_id: str, message_id: str, result: dict[str, Any]
@@ -200,6 +217,136 @@ class TaskStore:
             conversation["updated_at"] = assistant["updated_at"]
             self._write_one(conversation)
             return assistant
+
+    def get_stream_state(
+        self,
+        conversation_id: str,
+        *,
+        reasoning_offset: int = 0,
+        answer_offset: int = 0,
+        tool_count: int = 0,
+        tool_call_count: int = 0,
+        include_snapshot: bool = False,
+    ) -> dict[str, Any] | None:
+        """Return only the latest assistant state needed by the SSE stream.
+
+        The steady-state response contains text slices and newly appended tool
+        records instead of a copy of the complete conversation history. A
+        snapshot is copied only for the initial connection or a reconnect.
+        """
+        with self.lock:
+            conversation = self._read_one_for_append(conversation_id)
+            if not conversation:
+                return None
+            stream_revision = self._stream_revisions.get(conversation_id, 0)
+
+            assistant_index = -1
+            assistant = None
+            for index in range(len(conversation["messages"]) - 1, -1, -1):
+                candidate = conversation["messages"][index]
+                if candidate.get("role") == "assistant":
+                    assistant_index = index
+                    assistant = candidate
+                    break
+            if assistant is None:
+                return {
+                    "stream_revision": stream_revision,
+                    "conversation_status": conversation.get("status", ""),
+                    "error": conversation.get("error", ""),
+                    "assistant": None,
+                    "tool_messages": [],
+                }
+
+            reasoning = assistant.get("reasoning_content", "") or ""
+            answer = assistant.get("content", "") or ""
+            tool_calls = assistant.get("tool_calls") or []
+            tool_messages = [
+                message
+                for message in conversation["messages"][assistant_index + 1 :]
+                if message.get("role") == "tool"
+            ]
+            reasoning_offset = max(0, int(reasoning_offset))
+            answer_offset = max(0, int(answer_offset))
+            tool_count = max(0, int(tool_count))
+            tool_call_count = max(0, int(tool_call_count))
+
+            assistant_state = {
+                "id": assistant.get("id", ""),
+                "status": assistant.get("status", ""),
+                "reasoning_length": len(reasoning),
+                "answer_length": len(answer),
+                "tool_call_count": len(tool_calls),
+                "tool_count": len(tool_messages),
+            }
+            state: dict[str, Any] = {
+                "stream_revision": stream_revision,
+                "conversation_status": conversation.get("status", ""),
+                "error": conversation.get("error", ""),
+                "assistant": assistant_state,
+            }
+
+            if include_snapshot:
+                state["snapshot"] = {
+                    "id": assistant.get("id", ""),
+                    "role": "assistant",
+                    "content": answer,
+                    "reasoning_content": reasoning,
+                    "status": assistant.get("status", ""),
+                    "parts": copy.deepcopy(assistant.get("parts") or []),
+                    "tool_calls": copy.deepcopy(tool_calls),
+                }
+                state["tool_messages"] = copy.deepcopy(tool_messages)
+                return state
+
+            state["reasoning_delta"] = reasoning[reasoning_offset:]
+            state["answer_delta"] = answer[answer_offset:]
+            state["tool_calls"] = copy.deepcopy(tool_calls[tool_call_count:])
+            state["tool_messages"] = copy.deepcopy(tool_messages[tool_count:])
+            return state
+
+    def get_stream_revision(self, conversation_id: str) -> int | None:
+        """Return a cheap content revision without copying the conversation."""
+        with self.lock:
+            if conversation_id not in self._cache and not self._conversation_path(conversation_id):
+                return None
+            return self._stream_revisions.get(conversation_id, 0)
+
+    def wait_for_stream_update(
+        self,
+        conversation_id: str,
+        after_revision: int,
+        *,
+        timeout: float = 15.0,
+        coalesce_seconds: float = STREAM_UPDATE_COALESCE_SECONDS,
+    ) -> bool:
+        """Wait until a conversation changes, or until the heartbeat timeout.
+
+        The revision check and condition wait share ``self.lock``. That makes
+        the sequence of reading a stream state and starting the wait safe: an
+        update that happens between those two operations cannot be missed.
+        """
+        after_revision = max(0, int(after_revision))
+        timeout = max(0.0, float(timeout))
+        coalesce_seconds = max(0.0, float(coalesce_seconds))
+        with self._stream_condition:
+            revision = self._stream_revisions.get(conversation_id, 0)
+            if revision <= after_revision:
+                deadline = time.monotonic() + timeout
+                while revision <= after_revision:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return False
+                    self._stream_condition.wait(timeout=remaining)
+                    revision = self._stream_revisions.get(conversation_id, 0)
+
+            if coalesce_seconds:
+                deadline = time.monotonic() + coalesce_seconds
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    self._stream_condition.wait(timeout=remaining)
+            return self._stream_revisions.get(conversation_id, 0) > after_revision
 
     def has_running_message(self, conversation_id: str) -> bool:
         conversation = self.get_conversation(conversation_id)
@@ -288,6 +435,7 @@ class TaskStore:
         self._pending_chars.pop(conversation["id"], None)
         self._last_persisted_at[conversation["id"]] = time.monotonic()
         self._trim_cache()
+        self._notify_stream_update(conversation["id"])
 
     def _read_one(self, conversation_id: str) -> dict[str, Any] | None:
         cached = self._cache.get(conversation_id)
@@ -320,7 +468,13 @@ class TaskStore:
             return cached
         return self._read_one_or_raise(conversation_id)
 
-    def _write_one(self, conversation: dict[str, Any], *, enforce_cache_limit: bool = True) -> None:
+    def _write_one(
+        self,
+        conversation: dict[str, Any],
+        *,
+        enforce_cache_limit: bool = True,
+        notify_stream: bool = True,
+    ) -> None:
         path = self._conversation_path(conversation["id"])
         if not path:
             raise KeyError(f"Conversation file not found for: {conversation['id']}")
@@ -336,6 +490,8 @@ class TaskStore:
         self._last_persisted_at[conversation["id"]] = time.monotonic()
         if enforce_cache_limit:
             self._trim_cache()
+        if notify_stream:
+            self._notify_stream_update(conversation["id"])
 
     def _write_one_deferred(self, conversation: dict[str, Any], changed_chars: int) -> None:
         conversation_id = conversation["id"]
@@ -346,9 +502,10 @@ class TaskStore:
             self._cache[conversation_id] = copy.deepcopy(conversation)
             self._cache.move_to_end(conversation_id)
         self._pending_chars[conversation_id] = self._pending_chars.get(conversation_id, 0) + changed_chars
+        self._notify_stream_update(conversation_id)
         elapsed = time.monotonic() - self._last_persisted_at.get(conversation_id, 0)
         if elapsed >= PERSIST_INTERVAL_SECONDS or self._pending_chars[conversation_id] >= PERSIST_CHAR_THRESHOLD:
-            self._write_one(conversation)
+            self._write_one(conversation, notify_stream=False)
             return
         if conversation_id not in self._flush_timers:
             timer = threading.Timer(PERSIST_INTERVAL_SECONDS, self._flush_pending, args=(conversation_id,))
@@ -361,7 +518,7 @@ class TaskStore:
             self._flush_timers.pop(conversation_id, None)
             conversation = self._cache.get(conversation_id)
             if conversation is not None and self._pending_chars.get(conversation_id, 0):
-                self._write_one(conversation)
+                self._write_one(conversation, notify_stream=False)
 
     def _cancel_flush_timer(self, conversation_id: str) -> None:
         timer = self._flush_timers.pop(conversation_id, None)
@@ -383,12 +540,16 @@ class TaskStore:
 
             conversation = self._cache[candidate_id]
             if self._pending_chars.get(candidate_id, 0):
-                self._write_one(conversation, enforce_cache_limit=False)
+                self._write_one(conversation, enforce_cache_limit=False, notify_stream=False)
             else:
                 self._cancel_flush_timer(candidate_id)
             self._cache.pop(candidate_id, None)
             self._pending_chars.pop(candidate_id, None)
             self._last_persisted_at.pop(candidate_id, None)
+
+    def _notify_stream_update(self, conversation_id: str) -> None:
+        self._stream_revisions[conversation_id] = self._stream_revisions.get(conversation_id, 0) + 1
+        self._stream_condition.notify_all()
 
     def _read_all(self) -> list[dict[str, Any]]:
         conversations = []

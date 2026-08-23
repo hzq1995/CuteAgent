@@ -20,6 +20,8 @@ TOOL_DEFINITION = {
             "for tests, builds, installs, scripts, or any command whose output or exit code is needed; "
             "use timeout_seconds for slow commands. Background mode returns immediately with a PID "
             "and log path; check the log with a later run_bash call. It is not a durable service manager. "
+            "Do not append '&' to commands; use background=true for long-running processes, because "
+            "shell backgrounding can leave inherited output pipes open and make the call hang or delay. "
             "Do not use nohup, setsid, or disown."
         ),
         "parameters": {
@@ -36,7 +38,8 @@ TOOL_DEFINITION = {
                     "description": (
                         "Return immediately while the command continues. Use true only for continuous "
                         "processes such as a dev server or watcher. Keep false for tests, builds, installs, "
-                        "scripts, or commands whose output/exit code must be checked. If unsure, use false."
+                        "scripts, or commands whose output/exit code must be checked. Do not append '&' "
+                        "to the command; use this option instead. If unsure, use false."
                     ),
                     "default": False,
                 },
@@ -102,7 +105,10 @@ def run(
                 }
             time.sleep(0.1)
 
-        stdout, stderr = process.communicate()
+        # Use a bounded communicate: the shell may have exited while a `&`-backgrounded
+        # child still holds the write end of our capture pipes, so waiting for EOF would
+        # block forever. _communicate_after_termination times out and keeps buffered output.
+        stdout, stderr = _communicate_after_termination(process)
         return {
             "stdout": truncate(stdout),
             "stderr": truncate(stderr),

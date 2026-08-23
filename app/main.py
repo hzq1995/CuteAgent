@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import functools
 import json
 import re
 import threading
@@ -16,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.agent_tools import AgentToolRunner, load_tools, parse_tool_arguments
+from app.agent_tools import DEFAULT_TOOLS_DIR, AgentToolRunner, load_tools, parse_tool_arguments
 from app.app_settings import AppSettingsStore
 from app.config import BASE_DIR, get_settings
 from app.llm_client import OpenAICompatibleClient
@@ -78,6 +79,8 @@ memory_store = MemoryStore(BASE_DIR / "data" / "memories.json")
 SKILLS_DIR = BASE_DIR / "skills"
 CANCELLED_STATUS = "cancelled"
 CHAT_HISTORY_PAGE_SIZE = 6
+STREAM_HEARTBEAT_SECONDS = 15.0
+STREAM_UPDATE_COALESCE_SECONDS = 0.08
 
 
 def renderable_history_messages(messages: list[dict]) -> list[dict]:
@@ -132,7 +135,8 @@ class ConversationRunRegistry:
 
 
 running_conversations = ConversationRunRegistry()
-context_token_cache: dict[str, tuple[float, int]] = {}
+# conversation_id -> (stream_revision, computed_at, estimate)
+context_token_cache: dict[str, tuple[int, float, int]] = {}
 
 
 def require_login(request: Request) -> None:
@@ -406,14 +410,21 @@ async def conversation_stream(
             if await request.is_disconnected():
                 break
 
-            conversation = store.get_conversation(conversation_id)
-            if not conversation:
+            state = store.get_stream_state(
+                conversation_id,
+                reasoning_offset=sent_reasoning_len,
+                answer_offset=sent_answer_len,
+                tool_count=sent_tool_count,
+                tool_call_count=sent_tool_call_count,
+                include_snapshot=not sent_snapshot,
+            )
+            if not state:
                 yield sse("error", {"error": "Conversation not found"})
                 break
 
-            assistant = latest_assistant(conversation)
+            assistant = state.get("assistant")
             if not assistant:
-                yield sse("done", {"status": conversation["status"]})
+                yield sse("done", {"status": state.get("conversation_status", "")})
                 break
 
             if assistant["id"] != assistant_id:
@@ -427,12 +438,26 @@ async def conversation_stream(
                 sent_status = ""
                 yield sse("assistant", {"message_id": assistant_id})
 
+                if not state.get("snapshot"):
+                    state = store.get_stream_state(
+                        conversation_id,
+                        reasoning_offset=0,
+                        answer_offset=0,
+                        tool_count=0,
+                        tool_call_count=0,
+                        include_snapshot=True,
+                    )
+                    if not state or not state.get("assistant"):
+                        yield sse("error", {"error": "Conversation changed before snapshot"})
+                        break
+                    assistant = state["assistant"]
+
             if assistant["status"] != sent_status:
                 sent_status = assistant["status"]
                 yield sse(
                     "status",
                     {
-                        "conversation_status": conversation["status"],
+                        "conversation_status": state.get("conversation_status", ""),
                         "message_id": assistant_id,
                         "status": sent_status,
                     },
@@ -441,8 +466,7 @@ async def conversation_stream(
             # 每条连接先同步一次完整消息状态，再从这个状态点继续发送增量。
             # 这样断线重连时不会依赖客户端猜测工具/文本事件是否已经收全。
             if not sent_snapshot:
-                tools = current_tool_messages(conversation, assistant_id)
-                assistant_view = prepare_message_for_view(assistant, conversation_id)
+                assistant_view = prepare_message_for_view(state["snapshot"], conversation_id)
                 yield sse(
                     "snapshot",
                     {
@@ -455,36 +479,35 @@ async def conversation_stream(
                             "render_parts": assistant_view.get("render_parts") or [],
                             "tool_calls": assistant_view.get("tool_calls") or [],
                             "tool_messages": [
-                                prepare_message_for_view(item, conversation_id) for item in tools
+                                prepare_message_for_view(item, conversation_id)
+                                for item in state.get("tool_messages", [])
                             ],
                         },
                     },
                 )
-                sent_reasoning_len = len(assistant.get("reasoning_content") or "")
-                sent_answer_len = len(assistant.get("content") or "")
-                sent_tool_count = len(tools)
-                sent_tool_call_count = len(assistant.get("tool_calls") or [])
+                sent_reasoning_len = assistant["reasoning_length"]
+                sent_answer_len = assistant["answer_length"]
+                sent_tool_count = assistant["tool_count"]
+                sent_tool_call_count = assistant["tool_call_count"]
                 sent_snapshot = True
 
-            reasoning = assistant.get("reasoning_content") or ""
-            if len(reasoning) > sent_reasoning_len:
+            if not state.get("snapshot") and state.get("reasoning_delta"):
                 yield sse(
                     "reasoning",
-                    {"message_id": assistant_id, "delta": reasoning[sent_reasoning_len:]},
+                    {"message_id": assistant_id, "delta": state["reasoning_delta"]},
                 )
-                sent_reasoning_len = len(reasoning)
+                sent_reasoning_len = assistant["reasoning_length"]
 
-            answer = assistant.get("content") or ""
-            if len(answer) > sent_answer_len:
+            if not state.get("snapshot") and state.get("answer_delta"):
                 yield sse(
                     "answer",
-                    {"message_id": assistant_id, "delta": answer[sent_answer_len:]},
+                    {"message_id": assistant_id, "delta": state["answer_delta"]},
                 )
-                sent_answer_len = len(answer)
 
-            tool_calls = assistant.get("tool_calls") or []
-            if len(tool_calls) > sent_tool_call_count:
-                for tool_call in tool_calls[sent_tool_call_count:]:
+                sent_answer_len = assistant["answer_length"]
+
+            if not state.get("snapshot") and state.get("tool_calls"):
+                for tool_call in state["tool_calls"]:
                     function = tool_call.get("function", {})
                     raw_arguments = function.get("arguments", "") or "{}"
                     try:
@@ -502,11 +525,10 @@ async def conversation_stream(
                             },
                         },
                     )
-                sent_tool_call_count = len(tool_calls)
+                sent_tool_call_count = assistant["tool_call_count"]
 
-            tools = current_tool_messages(conversation, assistant_id)
-            if len(tools) > sent_tool_count:
-                for tool_message in tools[sent_tool_count:]:
+            if not state.get("snapshot") and state.get("tool_messages"):
+                for tool_message in state["tool_messages"]:
                     yield sse(
                         "tool_call_result",
                         {
@@ -514,9 +536,13 @@ async def conversation_stream(
                             "message": prepare_message_for_view(tool_message, conversation_id),
                         },
                     )
-                sent_tool_count = len(tools)
+                sent_tool_count = assistant["tool_count"]
 
-            context_tokens = current_context_token_estimate(conversation_id)
+            context_tokens = current_context_token_estimate(
+                conversation_id,
+                revision=state.get("stream_revision"),
+                force=assistant["status"] in {"failed", CANCELLED_STATUS, "succeeded"},
+            )
             if context_tokens != sent_context_tokens:
                 sent_context_tokens = context_tokens
                 yield sse(
@@ -524,8 +550,8 @@ async def conversation_stream(
                     {"message_id": assistant_id, "estimated_tokens": context_tokens},
                 )
 
-            if conversation.get("error"):
-                yield sse("error", {"message_id": assistant_id, "error": conversation["error"]})
+            if state.get("error"):
+                yield sse("error", {"message_id": assistant_id, "error": state["error"]})
                 break
 
             if assistant["status"] == "failed":
@@ -538,10 +564,17 @@ async def conversation_stream(
                 yield sse("done", {"status": "succeeded", "message_id": assistant_id})
                 break
 
-            await asyncio.sleep(0.7)
-            # Keep reverse proxies from buffering or timing out an otherwise
-            # quiet SSE connection while the model is still working.
-            yield ": keep-alive\n\n"
+            updated = await asyncio.to_thread(
+                store.wait_for_stream_update,
+                conversation_id,
+                state.get("stream_revision", 0),
+                timeout=STREAM_HEARTBEAT_SECONDS,
+                coalesce_seconds=STREAM_UPDATE_COALESCE_SECONDS,
+            )
+            if not updated:
+                # Keep reverse proxies from buffering or timing out an
+                # otherwise quiet SSE connection while the model is working.
+                yield ": keep-alive\n\n"
 
     return StreamingResponse(
         events(),
@@ -1318,9 +1351,23 @@ def unique_filename(filename: str, used_names: set[str], target_dir: Path) -> st
     return candidate
 
 
-def ensure_not_cancelled(conversation_id: str, assistant_message_id: str, cancel_event: threading.Event) -> None:
+def ensure_not_cancelled(cancel_event: threading.Event) -> None:
     if cancel_event.is_set():
         raise ConversationCancelled()
+
+
+def ensure_persisted_not_cancelled(
+    conversation_id: str,
+    assistant_message_id: str,
+    cancel_event: threading.Event,
+) -> None:
+    """Check persisted status once at the start of a turn.
+
+    During streaming, cancellation is propagated through the in-memory event.
+    Reading the full conversation for every model chunk would repeatedly copy
+    large histories and needlessly contend on the store lock.
+    """
+    ensure_not_cancelled(cancel_event)
     conversation = store.get_conversation(conversation_id)
     if not conversation:
         return
@@ -1334,7 +1381,7 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
     cancel_event = running_conversations.start(conversation_id, assistant_message_id)
 
     try:
-        ensure_not_cancelled(conversation_id, assistant_message_id, cancel_event)
+        ensure_persisted_not_cancelled(conversation_id, assistant_message_id, cancel_event)
         store.update_conversation(conversation_id, status="running", error="")
         store.update_message(conversation_id, assistant_message_id, status="running")
         app_config = app_settings_store.get()
@@ -1358,18 +1405,28 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
         tool_rounds = 0
 
         while True:
-            ensure_not_cancelled(conversation_id, assistant_message_id, cancel_event)
+            ensure_not_cancelled(cancel_event)
             requested_tools = False
             assistant_protocol_reasoning = ""
             assistant_protocol_content = ""
             for event in client.stream_agent_turn(messages, tool_runner.definitions):
-                ensure_not_cancelled(conversation_id, assistant_message_id, cancel_event)
+                ensure_not_cancelled(cancel_event)
                 if event["type"] == "reasoning":
                     assistant_protocol_reasoning += event["delta"]
-                    store.append_reasoning(conversation_id, assistant_message_id, event["delta"])
+                    store.append_reasoning(
+                        conversation_id,
+                        assistant_message_id,
+                        event["delta"],
+                        return_copy=False,
+                    )
                 elif event["type"] == "answer":
                     assistant_protocol_content += event["delta"]
-                    store.append_answer(conversation_id, assistant_message_id, event["delta"])
+                    store.append_answer(
+                        conversation_id,
+                        assistant_message_id,
+                        event["delta"],
+                        return_copy=False,
+                    )
                 elif event["type"] == "tool_calls":
                     requested_tools = True
                     tool_rounds += 1
@@ -1386,7 +1443,7 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
                     messages.append(assistant_message)
                     store.append_api_message(conversation_id, assistant_message_id, assistant_message)
                     for tool_call in tool_calls:
-                        ensure_not_cancelled(conversation_id, assistant_message_id, cancel_event)
+                        ensure_not_cancelled(cancel_event)
                         function = tool_call["function"]
                         arguments = parse_tool_arguments(function.get("arguments", ""))
                         result = tool_runner.run(function["name"], arguments)
@@ -1412,7 +1469,7 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
                     break
 
             if not requested_tools:
-                ensure_not_cancelled(conversation_id, assistant_message_id, cancel_event)
+                ensure_not_cancelled(cancel_event)
                 if assistant_protocol_content or assistant_protocol_reasoning:
                     store.append_api_message(
                         conversation_id,
@@ -1425,7 +1482,7 @@ def run_conversation_turn(conversation_id: str, assistant_message_id: str) -> No
                     )
                 break
 
-        ensure_not_cancelled(conversation_id, assistant_message_id, cancel_event)
+        ensure_not_cancelled(cancel_event)
         store.update_message(conversation_id, assistant_message_id, status="succeeded")
         store.update_conversation(conversation_id, status="succeeded", error="")
     except ConversationCancelled:
@@ -1452,16 +1509,39 @@ def build_model_context(conversation_id: str, assistant_message_id: str, system_
     return messages
 
 
-def current_context_token_estimate(conversation_id: str) -> int:
-    """Estimate the tokens that the next model turn would receive for a conversation."""
+def current_context_token_estimate(
+    conversation_id: str,
+    *,
+    revision: int | None = None,
+    force: bool = False,
+) -> int:
+    """Estimate next-turn tokens, rebuilding only after relevant changes.
+
+    A stream revision is more useful than a plain TTL here: an unchanged
+    conversation can reuse its estimate indefinitely. During active streaming,
+    a changed conversation may briefly reuse the previous estimate so a large
+    context is not rebuilt for every small answer chunk. Terminal states force
+    one final fresh estimate.
+    """
     now = time.monotonic()
+    if revision is None:
+        revision = store.get_stream_revision(conversation_id)
+    if revision is None:
+        revision = 0
     cached = context_token_cache.get(conversation_id)
-    if cached and now - cached[0] < TOOL_CONTEXT_CACHE_SECONDS:
-        return cached[1]
+    if cached and not force:
+        cached_revision, computed_at, estimate = cached
+        if cached_revision == revision or now - computed_at < TOOL_CONTEXT_CACHE_SECONDS:
+            return estimate
     app_config = app_settings_store.get()
     messages = build_model_context(conversation_id, "", app_config["system_prompt"])
-    estimate = estimate_message_tokens(messages)
-    context_token_cache[conversation_id] = (now, estimate)
+    estimate = estimate_message_tokens(messages) + tool_definitions_token_estimate()
+    latest_revision = store.get_stream_revision(conversation_id)
+    context_token_cache[conversation_id] = (
+        revision if latest_revision is None else latest_revision,
+        now,
+        estimate,
+    )
     return estimate
 
 
@@ -1477,6 +1557,18 @@ def estimate_message_tokens(messages: list[dict]) -> int:
         for unit in units
     )
     return cjk_characters + non_cjk_tokens
+
+
+@functools.lru_cache(maxsize=1)
+def tool_definitions_token_estimate() -> int:
+    """Cached token estimate for the tool definitions sent in every model request.
+
+    Tool definitions rarely change; recompute only once per process. Restart to
+    refresh after editing tools/*.py.
+    """
+    registry = load_tools(DEFAULT_TOOLS_DIR)
+    definitions = [tool.definition for tool in registry.tools.values()]
+    return estimate_message_tokens(definitions)
 
 
 # Private-use-area sentinel: user text (prompts/memories) realistically never
